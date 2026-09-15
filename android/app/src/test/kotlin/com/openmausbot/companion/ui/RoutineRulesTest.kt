@@ -4,6 +4,7 @@ import androidx.compose.runtime.saveable.SaverScope
 import com.openmausbot.companion.core.ConfigFlag
 import com.openmausbot.companion.core.ConfigStatus
 import com.openmausbot.companion.core.Instance
+import com.openmausbot.companion.core.InstanceCapabilities
 import com.openmausbot.companion.core.ModelCatalog
 import com.openmausbot.companion.core.ProviderSnapshot
 import com.openmausbot.companion.core.Routine

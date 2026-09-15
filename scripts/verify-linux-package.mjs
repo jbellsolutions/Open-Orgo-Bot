@@ -399,7 +399,7 @@ function verifyCloudflaredResources(resources, label, { directoryMode = 0o755 } 
 const appImage = exactlyOne(".AppImage");
 const deb = exactlyOne(".deb");
 const unpacked = path.join(releaseDir, "linux-unpacked");
-const executable = path.join(unpacked, "openmausbot");
+const executable = path.join(unpacked, "open-orgo-bot");
 const resources = path.join(unpacked, "resources");
 
 requireExecutable(appImage);
@@ -423,9 +423,9 @@ const fields = execFileSync(
   { encoding: "utf8" },
 );
 for (const expected of [
-  "Package: openmausbot",
+  "Package: open-orgo-bot",
   "Architecture: amd64",
-  "Maintainer: Milind Soni",
+  "Maintainer: Open Orgo Bot contributors",
   "Section: utils",
   "Priority: optional",
 ]) {
@@ -455,20 +455,21 @@ try {
     "usr",
     "share",
     "applications",
-    "com.openmausbot.app.desktop",
+    "ai.openorgobot.app.desktop",
   );
-  const scalableIcon = path.join(
+  const iconRoot = path.join(
     extracted,
     "usr",
     "share",
     "icons",
     "hicolor",
-    "scalable",
-    "apps",
-    "openmausbot.svg",
   );
   requireFile(desktopFile);
-  requireFile(scalableIcon);
+  const appIcons = readdirSync(iconRoot, { recursive: true })
+    .filter((relative) => /^open-orgo-bot\.(?:png|svg)$/i.test(path.basename(relative)))
+    .map((relative) => path.join(iconRoot, relative));
+  if (appIcons.length === 0) fail("DEB is missing the Open Orgo Bot application icon");
+  for (const icon of appIcons) requireFile(icon);
   const desktop = readFileSync(desktopFile, "utf8");
   for (const expected of [
     "Name=Open Orgo Bot",

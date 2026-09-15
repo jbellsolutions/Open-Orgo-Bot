@@ -71,8 +71,8 @@ const installed = inContainer(
   [
     prepare,
     command,
-    'dpkg-query -W -f="INSTALLED=\\${Version} \\${db:Status-Abbrev}\\n" openmausbot',
-    'test -x /opt/Open Orgo Bot/openmausbot && echo "EXECUTABLE=yes"',
+    'dpkg-query -W -f="INSTALLED=\\${Version} \\${db:Status-Abbrev}\\n" open-orgo-bot',
+    'test -x "/opt/Open Orgo Bot/open-orgo-bot" && echo "EXECUTABLE=yes"',
   ].join("\n"),
 );
 

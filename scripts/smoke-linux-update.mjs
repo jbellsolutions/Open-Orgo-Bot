@@ -71,7 +71,7 @@ async function main() {
   // The bug shape: a version in the filename, and a launcher pinned to it.
   const launched = path.join(installDir, "Open Orgo Bot-0.0.1-x86_64.AppImage");
   copyFileSync(packaged, launched);
-  const desktopEntry = path.join(applications, "com.openmausbot.app.desktop");
+  const desktopEntry = path.join(applications, "ai.openorgobot.app.desktop");
   writeFileSync(
     desktopEntry,
     `[Desktop Entry]\nName=Open Orgo Bot\nExec=${launched} %U\nType=Application\n`,
