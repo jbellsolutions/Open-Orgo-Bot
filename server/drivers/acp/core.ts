@@ -20,6 +20,10 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { PROVIDER_CREDENTIAL_ENV, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { computerProxyEnv } from "../../container-computer.ts";
+import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
+
+const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 
 /**
  * A `host::model` pick talks to a loopback server with its own key.
@@ -44,17 +48,11 @@ import type {
   TurnImageInput,
 } from "../../contracts.ts";
 import { newEventId, newId } from "../../contracts.ts";
-import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { supportsApprovalMode } from "../../../shared/approval-mode.ts";
 
-// Resolved from the server root, never relative to this file: bundling inlines
-// this module two directories up, so the `".."` pair here would climb past the
-// packaged server dir entirely. See server/proxy-paths.ts.
-const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
 import { commandSummary, toolDetailPreview } from "../../tool-summary.ts";
-import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 
 export interface AcpConfig {
   cli: string;

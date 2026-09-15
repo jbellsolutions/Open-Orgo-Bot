@@ -2,8 +2,8 @@
 
 Open Orgo Bot is open source under the [Apache License 2.0](LICENSE).
 
-This fork is based on OpenMausBot `v0.1.78`, commit
-`419a28149700093ac61750de1541df56cb8df981`. The upstream `enterprise/`
+This fork incorporates OpenMausBot through `v0.1.80`, commit
+`58b138ff329f78d896286983824c912f50b94faf`. The upstream `enterprise/`
 directory is intentionally not distributed because its separate license does
 not permit this white-label fork. The remaining application is the upstream
 open-source edition.

@@ -67,6 +67,8 @@ export function linuxAutoDescription(): string {
 
 export type OrgoPanelAction =
   | "ensure-orgo"
+  | "attach-ready-orgo"
+  | "busy-orgo"
   | "team-orgo"
   | "show-ready-orgo"
   | "show-sleeping-orgo"
@@ -76,6 +78,11 @@ export type OrgoPanelAction =
   | "auto-unavailable";
 
 const READY_BOX_STATES = new Set(["idle", "ready", "running"]);
+
+/** An Orgo state the panel can attach to and poll. */
+export function isReadyOrgoState(state: string | null | undefined): boolean {
+  return typeof state === "string" && READY_BOX_STATES.has(state);
+}
 const SLEEPING_BOX_STATES = new Set(["archived", "stopped"]);
 
 /** Mirror the turn router's Orgo choice without letting a passive panel open
@@ -90,6 +97,7 @@ export function resolveOrgoPanelAction({
   canUseCloud,
   autoLocal,
   teamComputer = false,
+  busy = false,
 }: {
   computer: Bot["computer"];
   configured: boolean;
@@ -97,6 +105,9 @@ export function resolveOrgoPanelAction({
   canUseCloud: boolean;
   autoLocal: boolean;
   teamComputer?: boolean;
+  /** A turn is running on this bot: lifecycle changes remain owned by the
+   * turn while the panel observes screenshots and current state. */
+  busy?: boolean;
 }): OrgoPanelAction {
   // A team's explicit grant wins over Auto's private-Orgo/local fallback.
   // This panel reports it; paid lifecycle and shared access stay in Team map.
@@ -107,7 +118,13 @@ export function resolveOrgoPanelAction({
     if (explicitCloud) return "unconfigured";
     return autoLocal ? "local" : "auto-unavailable";
   }
-  if (explicitCloud) return canUseCloud ? "ensure-orgo" : "auto-unavailable";
+  if (explicitCloud) {
+    if (!canUseCloud) return "auto-unavailable";
+    // Mid-turn the panel only watches: a ready Orgo is shown as-is (its
+    // frames already stream in), anything else is left to the turn.
+    if (busy) return boxState && READY_BOX_STATES.has(boxState) ? "attach-ready-orgo" : "busy-orgo";
+    return "ensure-orgo";
+  }
   if (canUseCloud && boxState) {
     if (READY_BOX_STATES.has(boxState)) return "show-ready-orgo";
     if (SLEEPING_BOX_STATES.has(boxState)) return "show-sleeping-orgo";

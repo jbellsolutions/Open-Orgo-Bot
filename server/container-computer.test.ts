@@ -17,10 +17,10 @@ import {
   VM_WORKSPACE_DIR,
   VM_WORKSPACE_GUEST,
   WORKSPACE_LABEL,
-  computerProxyEnv,
   containerComputerAction,
   containerComputerFrame,
   containerComputerMcp,
+  computerProxyEnv,
   containerComputerScreenshot,
   containerComputerStatus,
   containerRuntimeStatus,
@@ -610,7 +610,6 @@ describe("Cua integration", () => {
       OOB_ORGO_API_KEY: "t",
     });
   });
-
   it("mounts the official Cua MCP server for Local VM turns", () => {
     const connection = containerComputerMcp("podman");
     expect(connection.command).toBe(process.execPath);

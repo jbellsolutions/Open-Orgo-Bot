@@ -1,0 +1,54 @@
+name: Watch stable upstream releases
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compare the tracked and latest stable releases
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tracked=$(tr -d '[:space:]' < UPSTREAM_VERSION)
+          latest=$(gh api repos/milind-soni/OpenMausBot/releases/latest --jq .tag_name)
+          echo "tracked=$tracked" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$tracked" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open a deduplicated review issue
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRACKED: ${{ steps.upstream.outputs.tracked }}
+          LATEST: ${{ steps.upstream.outputs.latest }}
+        run: |
+          gh label create upstream-update --color 5f6cff \
+            --description "A stable OpenMausBot release needs isolated compatibility review" \
+            --force
+          title="Review upstream OpenMausBot ${LATEST}"
+          existing=$(gh issue list --state open --label upstream-update \
+            --search "${title} in:title" --json number --jq 'length')
+          if [ "$existing" != "0" ]; then
+            exit 0
+          fi
+          body=$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
+            "OpenMausBot published **${LATEST}**; this fork currently tracks **${TRACKED}**." \
+            "Do not merge it directly. Validate it in an isolated worktree using docs/UPSTREAM_SYNC.md." \
+            "Protected areas include Orgo, Hermes defaults, product identity, secure credentials, packaging, licensing, and the removal of enterprise/." \
+            "Upstream release: https://github.com/milind-soni/OpenMausBot/releases/tag/${LATEST}")
+          gh issue create --title "$title" --label upstream-update --body "$body"

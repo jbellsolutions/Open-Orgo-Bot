@@ -1,391 +1,197 @@
-> ⚠️ **No affiliation with any cryptocurrency.** Open Orgo Bot has no token. Any coin using the Open Orgo Bot, Maus, or SupaMaus name is not created, endorsed, or affiliated with this project or its maintainer. I have received no tokens, payment, or allocation from anyone, and I will not be endorsing any token.
-
 <div align="center">
+
+<img src="public/app-icon.png" alt="Open Orgo Bot" width="112">
 
 # Open Orgo Bot
 
-**Your own team of AI bots, in a chat app.**
+### A local-first AI team for your Mac, powered by Hermes and Orgo computers
 
-<sub>The OpenMausBot desktop app, minimally adapted to use Hermes and Orgo.</sub>
+[![Upstream](https://img.shields.io/badge/upstream-OpenMausBot%20v0.1.80-5f6cff)](https://github.com/milind-soni/OpenMausBot/releases/tag/v0.1.80)
+[![License](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20silicon%20%7C%20Intel-black?logo=apple)](#install-on-macos)
+[![Default agent](https://img.shields.io/badge/default%20agent-Hermes-7c3aed)](https://github.com/NousResearch/hermes-agent)
+[![Computer](https://img.shields.io/badge/computer-Orgo-0ea5e9)](https://orgo.ai)
 
-This fork starts from OpenMausBot `v0.1.78` at commit
-`419a28149700093ac61750de1541df56cb8df981`. It retains the original Electron
-interface and packaging system, makes the existing Hermes engine the default,
-and replaces the former cloud-computer adapter with Orgo. Orgo is an external
-service and requires an Orgo API key.
-
-Every bot in the sidebar is a real agent — Hermes by default, with Claude, Codex, and the other upstream engines still available — with its own
-personality, its own model, its own cloud computer, and its own connected apps.
-Talk to them like contacts. Watch them work. Approve what matters.
-
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Electron](https://img.shields.io/badge/Electron-macOS%20%C2%B7%20Windows%20%C2%B7%20Ubuntu-2B2E3A?logo=electron&logoColor=9FEAF9)
-![Agents](https://img.shields.io/badge/default-Hermes-2a9d8f)
-[![Release](https://img.shields.io/github/v/release/jbellsolutions/open-orgo-bot?label=release&color=1084fe&cacheSeconds=300)](https://github.com/jbellsolutions/open-orgo-bot/releases/latest)
-![PRs](https://img.shields.io/badge/PRs-welcome-38d591)
-
-<br>
-
-<a href="https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot.dmg">
-  <img src="https://img.shields.io/github/v/release/jbellsolutions/open-orgo-bot?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%20Download%20for%20Mac%20%28Apple%20silicon%29&labelColor=070707&color=1084fe&cacheSeconds=300" alt="Download the latest Open Orgo Bot for Mac with Apple silicon (.dmg)" height="40">
-</a>
-&nbsp;
-<a href="https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot-intel.dmg">
-  <img src="https://img.shields.io/github/v/release/jbellsolutions/open-orgo-bot?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%20Download%20for%20Mac%20%28Intel%29&labelColor=070707&color=2a9d8f&cacheSeconds=300" alt="Download the latest Open Orgo Bot for Intel Macs (.dmg)" height="40">
-</a>
-&nbsp;
-<a href="https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot-setup.exe">
-  <img src="https://img.shields.io/github/v/release/jbellsolutions/open-orgo-bot?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%20Download%20for%20Windows&labelColor=070707&color=4cc2ff&cacheSeconds=300" alt="Download the latest Open Orgo Bot for Windows (.exe)" height="40">
-</a>
-&nbsp;
-<a href="https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot-amd64.deb">
-  <img src="https://img.shields.io/github/v/release/jbellsolutions/open-orgo-bot?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%20Download%20for%20Ubuntu&labelColor=070707&color=e95420&cacheSeconds=300" alt="Download the latest Open Orgo Bot for Ubuntu (.deb)" height="40">
-</a>
-
-<sub>[latest release](https://github.com/jbellsolutions/open-orgo-bot/releases/latest) &nbsp;·&nbsp; macOS: Apple silicon & Intel · signed & notarized .dmg &nbsp;·&nbsp; Windows: x64 installer &nbsp;·&nbsp; Ubuntu 24.04 x64: .deb or AppImage beta &nbsp;·&nbsp; [all releases](https://github.com/jbellsolutions/open-orgo-bot/releases)</sub>
-
-<br>
-<br>
-
-<img src="docs/screenshots/hero.png" alt="Open Orgo Bot — a Telegram-style chat app where every chat is a real AI agent" width="900">
+[Download for Apple silicon](https://github.com/jbellsolutions/Open-Orgo-Bot/releases/latest/download/Open-Orgo-Bot.dmg)
+·
+[Download for Intel](https://github.com/jbellsolutions/Open-Orgo-Bot/releases/latest/download/Open-Orgo-Bot-intel.dmg)
+·
+[All releases](https://github.com/jbellsolutions/Open-Orgo-Bot/releases)
 
 </div>
 
----
+Open Orgo Bot keeps the polished Electron desktop experience from OpenMausBot,
+uses Hermes as the default agent, and replaces the upstream Box computer
+provider with Orgo. It is a focused open-source fork—not a separate rewrite.
 
-## Why
+Each bot gets its own conversation, model, memory, tools, connected apps, and
+optional remote Linux desktop. You can watch the desktop live, take control,
+run shell commands, and stop or restart the computer from the existing computer
+panel.
 
-One assistant in one box is the wrong shape for agents. Open Orgo Bot is an open-source take on **Grok Bot** —
-it keeps the idea (AI as a *messaging app*: a roster of bots you chat with, each with its own personality,
-memory of its thread, model, computer, and apps) and rebuilds it open, local-first, and on the agents you
-already have:
+## Install on macOS
 
-- **Bring your own agents.** Bots run on the `claude`, `codex`, and `grok` CLIs installed on your own machine
-  — your existing logins and subscriptions, no new accounts, no proxy in the middle. Point any engine at a
-  custom CLI binary (a versioned build or wrapper) in **Settings → Engines**.
-- **Local first.** One small harness server on `127.0.0.1` owns every agent process. Transcripts, keys, and
-  events live in `~/.openorgobot`, not a cloud.
-- **Agents with hands.** Each bot can use a cloud Linux desktop, an isolated Local VM, or—where the platform
-  safety boundary is currently certified—your own computer, plus 500+ apps through Composio. Host control is
-  available on macOS and Ubuntu Xorg after explicit opt-in. Ubuntu Wayland host control remains disabled while
-  issue #345 is resolved.
+### One-command install
 
-## Features
+Paste this into Terminal:
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 🧠 Pick a brain per bot
-
-A model picker with a provider rail — Claude and Codex models side by side, defaults marked, unavailable
-providers dimmed with the reason. Switch a bot's model mid-conversation.
-
-<img src="docs/screenshots/model-picker.png" alt="Model picker with provider rail" width="100%">
-
-</td>
-<td width="50%" valign="top">
-
-### 🖥️ Every bot gets a computer
-
-Open the Computer panel and the bot's cloud desktop spins up on its own — live screen preview while it
-works, "Open desktop" to take over in your browser, or point the bot at *this Mac* instead.
-
-<img src="docs/screenshots/computer-panel.png" alt="Computer panel with live screen preview" width="100%">
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🙋 Bots ask before they act
-
-Shell commands, file edits, and questions surface as inline cards — Allow / Deny / answer in chat. A
-permission broker turns every risky action into a decision you make, for cloud and local computers alike.
-
-<img src="docs/screenshots/approval-card.png" alt="Approval and question cards in chat" width="100%">
-
-</td>
-<td width="50%" valign="top">
-
-### 🔌 Connected apps
-
-A one-click marketplace over Composio Sessions: Gmail, Slack, GitHub, Notion, Linear and hundreds more.
-OAuth once, and every bot can use them as tools.
-
-<img src="docs/screenshots/marketplace.png" alt="Connected apps marketplace" width="100%">
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🗂 Manage bots like chats
-
-Right-click any bot: pin, mark unread, edit profile, duplicate, copy conversation ID, hide, delete. It's a
-messaging app — your agents behave like contacts.
-
-<img src="docs/screenshots/context-menu.png" alt="Bot context menu" width="100%">
-
-</td>
-<td width="50%" valign="top">
-
-### 🔑 Keys once, everything lights up
-
-Paste credentials in App Settings — they persist locally and the provider fleet hot-reloads instantly.
-Secrets are write-only: the UI only ever sees "configured" flags.
-
-<img src="docs/screenshots/app-settings.png" alt="App-level settings with API keys" width="100%">
-
-</td>
-</tr>
-</table>
-
-### #️⃣ Channels for every context
-
-Keep Work, Personal, and each project in separate channels without cloning your bots. Every channel has
-its own transcript, shared instructions, working folder, responder rules, and editable bot roster. File a
-channel and its bots under a named context, then rename it or change its members whenever the team changes.
-
-### 📦 Install a complete team from one Markdown file
-
-Browse outcome-driven teams on [BotMRR](https://botmrr.io), then choose **Add to Open Orgo Bot**. The app
-opens a review screen before creating the bots, Chief of Staff, channels, playbooks, connector checklist,
-and suggested routines. You can also import the same `.md` file from disk or paste its public GitHub URL
-in **Teams → Import**.
-
-The format stays portable: Open Orgo Bot reads the structured YAML frontmatter for a reliable one-click
-install, while Grok, Claude, ChatGPT, and people can follow the ordinary Markdown playbook. Connections
-remain off until you approve them, routines arrive paused, and packages never carry credentials,
-conversations, permissions, memory, or computer access. Browse the
-[open-source playbook repository](https://github.com/milind-soni/openmausbot-teams) or read its
-[portable format](https://github.com/milind-soni/openmausbot-teams/blob/main/FORMAT.md).
-
-### 🎧 Bots that talk back
-
-Press the speaker on any reply, or switch a bot to read its answers out as they land — so you can listen
-to what ran overnight while you make breakfast. Hit **call** and it's a conversation: it hears you, tells
-you what it's doing while it works, and asks for approvals out loud.
-
-Bring your own ElevenLabs key — paste it once in App Settings, pick a voice, and every bot can talk.
-Give a bot its own voice and a channel stops sounding like one person.
-
-**Also in the box:** streaming replies with tool-run activity chips · native macOS dictation from the
-composer mic (on-device Apple speech recognition — desktop app) · SupaMaus cursor mascots with role-aware
-expressions · screenshots of the bot's work folded into the transcript.
-
-## How it works
-
-Two processes. The app holds no transports of its own — it sends typed commands over HTTP and folds one SSE
-event stream into state. The harness server owns every agent process and normalizes each provider's native
-protocol into one canonical runtime event stream (logged per-thread as NDJSON).
-
-```mermaid
-flowchart LR
-    subgraph app ["App — React + Tailwind (5199)"]
-        UI[Chat UI · model picker · computer panel]
-    end
-    subgraph server ["Harness server (127.0.0.1:8799)"]
-        REG[Driver registry] --> BUS[Event bus → SSE]
-        BROKER[Permission broker]
-    end
-    subgraph agents ["Agents on your computer"]
-        CL[claude CLI]
-        CX[codex CLI]
-        GR[grok CLI]
-    end
-    UI -- "HTTP commands" --> server
-    BUS -- "one SSE stream" --> UI
-    REG --> CL & CX & GR
-    CL & CX & GR -- "permission requests" --> BROKER
-    server -- "Orgo API" --> ORGO[("Cloud computer<br/>Orgo")]
-    server -- "Composio Session" --> APPS[("Gmail · Slack · GitHub · …")]
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/jbellsolutions/Open-Orgo-Bot/main/install.sh)"
 ```
 
-| Layer | Where | What it does |
-|---|---|---|
-| Drivers | `server/drivers/` | One per provider: Claude, Codex, and Grok Build over their local CLIs (stream-JSON / JSON-RPC / ACP), plus a cloud-computer agent. Unknown drivers degrade to "unavailable", never crash the fleet. |
-| Harness | `server/harness/` | Registry (configs → live instances) and the fan-in event bus every client folds. |
-| API | `server/index.ts` | Bots, turns, approvals, model catalog, computer lifecycle, connectors, config — HTTP + SSE. |
-| Voice | `server/tts/` | ElevenLabs, bring your own key. Runs on the harness so the key never reaches the UI; markdown is rewritten into something worth hearing before it is spoken. |
-| App | `src/` | The chat shell. Server-backed store, one reducer, zero client-side transports. |
-| Desktop | `electron/` | macOS, Windows, and Ubuntu shells with an embedded harness and platform capabilities; Apple speech stays macOS-only, Ubuntu Xorg has opt-in local control, and Wayland remains fail-closed. |
+The installer:
 
-### Orchestrate Open Orgo Bot over MCP
+- detects Apple silicon or Intel automatically;
+- downloads the matching release from GitHub;
+- verifies the DMG against the published SHA-256 checksum;
+- preserves the existing app if installation fails;
+- installs into `/Applications` or your personal Applications folder; and
+- launches Open Orgo Bot when finished.
 
-Open Orgo Bot ships a stdio MCP server for external clients such as Claude Desktop and Cursor. It exposes a
-deliberately bounded team control plane: inspect bots and channels, read/search compact transcript pages,
-create and configure bots/channels/tasks, send work, wait for completion, switch models, and interrupt turns.
-It does **not** expose approval grants, deletion, arbitrary settings, credentials, or computer lifecycle.
+### Manual install
 
-See [MCP server setup and tool reference](docs/mcp-server.md).
+1. Download the [Apple-silicon DMG](https://github.com/jbellsolutions/Open-Orgo-Bot/releases/latest/download/Open-Orgo-Bot.dmg)
+   or [Intel DMG](https://github.com/jbellsolutions/Open-Orgo-Bot/releases/latest/download/Open-Orgo-Bot-intel.dmg).
+2. Open the DMG and drag **Open Orgo Bot** into **Applications**.
+3. Launch it from Applications or Spotlight.
 
-## Quick start
+Community builds are checksum-verified but may not yet be notarized with an
+Apple Developer ID. The one-command installer handles that case only after the
+download checksum matches the checksum published with the GitHub release.
 
-**Released builds ([latest release](https://github.com/jbellsolutions/open-orgo-bot/releases/latest)):** the harness server is embedded, so no separate server setup is required.
+## First run
 
-| | Download | Install |
-|---|---|---|
-| **macOS** (Apple silicon) | [Open-Orgo-Bot.dmg](https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot.dmg) | Drag it to Applications, open it. Signed & notarized. |
-| **macOS** (Intel) | [Open-Orgo-Bot-intel.dmg](https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot-intel.dmg) | Same app, built for Intel Macs. Signed & notarized. |
-| **Windows** (x64) | [Open-Orgo-Bot-setup.exe](https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot-setup.exe) | Run it — one-click, per-user, no admin rights. The installer isn't code-signed yet, so SmartScreen shows "unknown publisher": **More info → Run anyway**. |
-| **Ubuntu 24.04** (x64) | [Open-Orgo-Bot-amd64.deb](https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot-amd64.deb) · [Open-Orgo-Bot.AppImage](https://github.com/jbellsolutions/open-orgo-bot/releases/latest/download/Open-Orgo-Bot.AppImage) | Install the `.deb` with APT (recommended), or make the AppImage executable and run it. Beta; GNOME is the supported desktop. |
+1. Open **Settings → Engines** and confirm Hermes is available. Open Orgo Bot
+   uses the existing Hermes login and model configuration on your Mac.
+2. Open **Settings → API keys** and add an Orgo API key if you want remote
+   computers. Chat and local tools work without an Orgo account.
+3. Create a bot, choose a model, and send a message.
+4. Select **Computer → Cloud** to create or attach the bot's Orgo computer.
 
-See the [Ubuntu Desktop guide](docs/linux-desktop.md) for installation, capabilities, and troubleshooting.
-Any desktop build can also pair as a client to another Windows, macOS, or Ubuntu host over Tailscale; see [desktop-to-desktop companion mode](docs/desktop-companion.md).
+Secrets entered through the desktop app use the existing encrypted credential
+store. An Orgo computer is bound to a verified provider UUID before the app
+allows lifecycle or control actions.
 
+## What changed from upstream
 
-**From source:**
+| Area | Open Orgo Bot behavior |
+|---|---|
+| Desktop application | Existing Electron UI, native Mac window, permissions, computer panel, updater architecture, and DMG packaging |
+| Default agent | Hermes; the other upstream engines remain available |
+| Cloud computer | Orgo replaces Box across discovery, creation, screen capture, live desktop, input, shell, start, stop, restart, and deletion |
+| Identity | Independent name, artwork, bundle ID, URL scheme, storage directory, and release channel |
+| Licensing | Apache-2.0 open-source edition only; upstream `enterprise/` is excluded |
+| Upstream base | OpenMausBot `v0.1.80` (`58b138ff329f78d896286983824c912f50b94faf`) |
 
-```sh
-git clone https://github.com/jbellsolutions/open-orgo-bot && cd open-orgo-bot
-pnpm install
+## Highlights
 
-pnpm dev:server    # harness server → 127.0.0.1:8799
-pnpm dev           # app → http://127.0.0.1:5199
-pnpm dev:desktop   # Electron shell; keep the two commands above running
+- **A real desktop app.** No browser wrapper or replacement interface.
+- **Hermes by default.** Use open models through your existing Hermes setup.
+- **One Orgo computer per bot.** Persistent remote desktops with screenshots,
+  interactive viewing, shell access, and lifecycle controls.
+- **Human approval controls.** Sensitive tool calls stay behind the app's
+  existing approval system.
+- **Local-first state.** Bots, conversations, and settings live under
+  `~/.openorgobot` on the machine running the app.
+- **Multiple engines.** Keep Claude, Codex, Pi, Qwen, Grok, and compatible
+  upstream drivers alongside Hermes.
+- **Connected apps.** Retains the upstream Composio integration and custom MCP
+  server support.
+- **Reproducible packaging.** Apple-silicon and Intel artifacts are produced
+  from the same pinned source revision.
+
+## Safety boundaries
+
+Open Orgo Bot does not silently trust a clean Git merge. The maintained fork
+protects these invariants during every upstream update:
+
+- Orgo remains the only cloud-computer runtime;
+- Hermes remains the default agent;
+- product identity, storage, protocol, and updater identifiers do not revert;
+- credentials never enter command-line arguments or renderer-readable state;
+- the non-redistributable upstream enterprise directory stays absent; and
+- relevant unit, Electron, server, provider, and package checks must pass.
+
+The repository includes a daily upstream-release watcher. It opens a GitHub
+issue when OpenMausBot publishes a newer stable release; it never merges that
+release automatically. Integration is first tested in an isolated worktree.
+See [the upstream maintenance policy](docs/UPSTREAM_SYNC.md).
+
+## Build from source
+
+Requirements: macOS, Node.js 24+, pnpm, Xcode Command Line Tools, and at least
+one supported agent CLI.
+
+```bash
+git clone https://github.com/jbellsolutions/Open-Orgo-Bot.git
+cd Open-Orgo-Bot
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm package:mac
 ```
 
-Requirements: **macOS, Windows, or Ubuntu 24.04 x64**, **Node 24+**, **pnpm**, and at least one agent CLI — [`claude`](https://claude.com/claude-code),
-[`codex`](https://github.com/openai/codex), or [`grok`](https://x.ai/cli) — installed and logged in. They appear
-in the model picker automatically.
+Development mode:
 
-Package the desktop application:
-
-```sh
-pnpm package:mac      # macOS: DMG + ZIP; requires Swift/Xcode tools
-pnpm package:win      # Windows: installer + ZIP
-pnpm package:linux    # Ubuntu x64: .deb + AppImage + verified CUA runtime
+```bash
+pnpm dev:server
+pnpm dev
+pnpm dev:desktop
 ```
 
-### Desktop capability status
+Packaging writes architecture-specific applications and DMGs to `release/`.
+The release workflow supports Developer ID signing and Apple notarization when
+the repository's signing secrets are configured.
 
-| Capability | macOS | Ubuntu 24.04 Xorg | Ubuntu 24.04 Wayland |
-|---|---|---|---|
-| Packaged app, embedded harness, local agent CLIs | Supported | Beta | Beta |
-| Composio and Orgo cloud computers | Supported | Beta | Beta |
-| Explicit preview-only local screen capture | Supported | Beta | Beta |
-| Bot control of this computer | Supported | Beta, explicit opt-in | Disabled: Wayland safety gate |
-| Native on-device dictation | Supported | Planned | Planned |
+## Verification
 
-The Linux preview is user-initiated and never enables local bot control or Auto routing. On Xorg, the reviewed Cua
-Driver 0.19.3 runtime starts only after explicit opt-in and without its full-screen cursor overlay. On Wayland the
-app never starts it and clears legacy opt-ins while that real-seat safety gate remains unresolved. Chat, preview,
-Cloud, and Local VM remain available on both sessions. See the [Ubuntu Desktop guide](docs/linux-desktop.md) and tracking
-issues [#29](https://github.com/jbellsolutions/open-orgo-bot/issues/29),
-[#345](https://github.com/jbellsolutions/open-orgo-bot/issues/345), and
-[#113](https://github.com/jbellsolutions/open-orgo-bot/issues/113).
+Useful checks before a release:
 
-The Linux packager downloads only the tag-pinned upstream archive during the build, verifies its size, SHA-256,
-complete member allowlist, and inner executable hashes, then packages only the CLI and cursor-theme sidecar. The
-installed app never downloads or self-updates native automation code. Cua's MIT notice, Inter's SIL OFL, a generated
-third-party license report, and a CycloneDX inventory ship with the runtime. See
-[`third_party/cua-driver/`](third_party/cua-driver/) for the reviewed provenance record.
-
-These credentials are optional — local chat works without them. Paste a key once in **App Settings** (gear
-in the sidebar footer) when you want to enable its integration:
-
-| Credential | What it enables | Where to get it |
-|---|---|---|
-| Composio project key (`ak_…`) | Connect Gmail, GitHub, Slack, Notion, and other apps to your bots | [Open Orgo Bot Composio setup](docs/composio.md) |
-| Orgo API key | Give bots an isolated remote Linux computer with a desktop and terminal | [Orgo API introduction](https://docs.orgo.ai/api-reference/introduction) |
-| ElevenLabs key | Read replies aloud, and call your bots | [ElevenLabs API keys](https://elevenlabs.io/app/settings/api-keys) |
-
-Composio and Orgo are third-party services with their own accounts and terms. Using a cloud computer may incur charges.
-
-```sh
-pnpm typecheck     # app + server
-pnpm test          # unit, driver, API, and desktop capability tests
-pnpm build         # typecheck + production build
-pnpm check:electron # syntax-check Electron main/preload files
-pnpm package:win   # Windows installer + zip → release/
-pnpm package:linux # Ubuntu x64 .deb + AppImage → release/
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm broker:test
+pnpm test:electron
+pnpm test:packaged-server
+pnpm package:mac
 ```
 
-### Routines and webhook triggers
+An Orgo-connected end-to-end run is available through
+`scripts/e2e-server.mjs --with-orgo`; it requires a real Orgo API key and may
+create billable cloud resources.
 
-Routines can run once, on selected weekdays, or every 5–1,440 minutes, using either a MAUS's configured
-model/computer or the Cloud VM runner. Interval schedules stay aligned to their chosen start time and skip
-an occurrence when the previous run is still active, so slow work cannot build an unbounded queue. A
-separate optional Advanced run limit can safely stop stuck work; no timeout is imposed unless one is chosen.
-The existing duration field remains calendar/display metadata. Webhook triggers are independent from schedules
-but reuse the same queued task executor and calendar
-receipts.
+## Project layout
 
-Open Orgo Bot starts a webhook-only receiver on `127.0.0.1:8800` by default (or one port above `OMB_PORT`).
-Set `OMB_WEBHOOK_PORT` to choose another port. A webhook secret is shown once when the trigger is created
-or rotated. Bearer authentication is recommended so the secret stays out of request URLs and most access
-logs; a single capability URL remains available for senders that cannot configure headers. The receiver
-exposes only `/health` and secret `/hooks/...` endpoints; it never exposes the app's broader API.
-Open Orgo Bot must remain running to accept a delivery. For public internet delivery, proxy only this
-dedicated receiver through a hosted relay or a tool such as Tailscale Funnel.
+| Path | Purpose |
+|---|---|
+| `src/` | React desktop interface |
+| `electron/` | Native desktop shell, permissions, secure credentials, and packaging integration |
+| `server/` | Agent harness, providers, Orgo adapter, computer proxy, approvals, and local API |
+| `scripts/` | Build, packaging, smoke-test, and release utilities |
+| `docs/` | Architecture, security, operations, and verification notes |
+| `.github/workflows/` | Continuous integration, packaging, releases, and upstream monitoring |
 
-## Status
+## Updating from OpenMausBot
 
-Early but real — the loop works end to end: message → agent → streamed reply → tools → approvals →
-computer use. macOS, Windows, and Ubuntu 24.04 x64 have released builds; Ubuntu remains a beta with the
-capability limits above. Rough edges to expect: hosted/mobile connectivity is still being built, and webhook
-triggers currently use the local receiver rather than an always-on hosted relay.
-Voice needs an ElevenLabs key, and calls are macOS-only for now (they ride the same on-device dictation as
-the composer mic) — see [`docs/voice-mode.md`](docs/voice-mode.md) for the design and the known gaps.
+The `upstream` Git remote points to
+[`milind-soni/OpenMausBot`](https://github.com/milind-soni/OpenMausBot) and is
+configured as fetch-only. Do not merge an upstream release directly into a
+working checkout. Follow [docs/UPSTREAM_SYNC.md](docs/UPSTREAM_SYNC.md), which
+requires an isolated integration worktree and explicit protected-invariant
+checks before the tested result reaches `main`.
 
-Contributions welcome — the driver SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately
-small; adding a provider is one file in [`server/drivers/`](server/drivers/) plus a one-line registration.
-No code needed at all for your own engines: any ACP-speaking CLI or OpenAI-compatible endpoint
-plugs in through config — see [`docs/custom-engines.md`](docs/custom-engines.md).
-Users can add their own MCP tool servers with zero code via [`docs/custom-mcp-servers.md`](docs/custom-mcp-servers.md).
+## License and attribution
 
-## Run from a terminal or on a server
+Open Orgo Bot is licensed under [Apache License 2.0](LICENSE). Copyright and
+attribution for the upstream project and bundled third-party components are
+retained in [NOTICE](NOTICE), [LICENSING.md](LICENSING.md), and
+[`third_party/`](third_party/).
 
-With Node 24 or newer, install once and run:
+The upstream `enterprise/` directory is intentionally excluded because its
+separate license does not permit redistribution or white-labeling without an
+agreement. Orgo is an external service dependency and does not change this
+repository's open-source license.
 
-```sh
-npm install -g openmausbot
-openmausbot
-```
-
-Or use `npx openmausbot` without a global install. First launch guides you with
-arrow-key choices: choose AI access, sign in or paste a hidden API key, choose
-a model, and optionally connect a phone. Next time, the same command reuses your
-saved setup and opens the local workspace. Keep the terminal open; Ctrl-C stops
-the server, not your saved work. Use `--no-open` to skip opening the browser.
-
-Phone access is optional and defaults to skipping. Choose an explicitly
-approved managed public HTTPS endpoint protected by pairing, an existing
-Tailscale connection, or your own HTTPS reverse proxy. Use Safari or an installed
-iOS app on iPhone/iPad; Android uses the web browser for this CLI flow. A phone
-cannot use a localhost link. `--local` ignores saved remote access for one launch;
-`--no-pair` suppresses phone prompts and invitations but does not disable a saved
-remote connection.
-
-Run `openmausbot setup` to reconfigure without resetting bots or conversations;
-the saved model default applies only to new bots. Native setup confirms provider
-sign-in; API setup asks before a potentially billable test message. API keys are
-saved as plaintext, not encrypted, in private `config.json` (`0600` on Unix).
-See the [short setup guide](docs/cli-onboarding.md) for account differences,
-phone choices, credential storage, and cancellation.
-
-For a background service on a VPS or an always-on computer, use
-`npx openmausbot serve` with explicit remote options: `--tunnel` after
-`npx openmausbot login` for a managed public address, `--tailscale` for your
-tailnet, or the Docker stack for your own domain. These are separate from
-AI-provider sign-in. Devices pair once with a short code. The deployment guide is
-[docs/deploy-vps.md](docs/deploy-vps.md); the reference is
-[docs/self-hosting.md](docs/self-hosting.md).
-
-## License
-
-[Apache License 2.0](LICENSE) © 2026 Milind Soni, OpenMausBot contributors,
-and Open Orgo Bot contributors. This fork contains only the open-source
-edition; the upstream non-redistributable `enterprise/` directory is excluded.
-See [NOTICE](NOTICE) and [LICENSING.md](LICENSING.md) for attribution and
-third-party terms.
-
-Packaged Cua Driver components retain their upstream MIT, SIL OFL 1.1, MPL-2.0, and other dependency terms;
-the corresponding notices, license texts, source locations, and SBOM are in
-[`third_party/cua-driver/`](third_party/cua-driver/) and ship beside the native runtime.
-
-Open Orgo Bot is an independent, open-source project inspired by Grok Bot. It is
-not affiliated with, endorsed by, or associated with xAI; "Grok" is a trademark
-of its respective owner.
+Open Orgo Bot is an independent community project. It is not affiliated with
+or endorsed by OpenMausBot, Orgo, Nous Research, or xAI.

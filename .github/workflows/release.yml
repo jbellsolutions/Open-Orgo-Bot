@@ -31,11 +31,6 @@ on:
         required: false
         type: boolean
         default: false
-  push:
-    branches:
-      - main
-    paths:
-      - package.json
 
 permissions:
   contents: read
@@ -243,6 +238,7 @@ jobs:
           v=$(node -p "require('./package.json').version")
           cp "release/Open-Orgo-Bot-$v-arm64.dmg" release/Open-Orgo-Bot.dmg
           cp "release/Open-Orgo-Bot-$v-x64.dmg" release/Open-Orgo-Bot-intel.dmg
+          (cd release && shasum -a 256 Open-Orgo-Bot.dmg Open-Orgo-Bot-intel.dmg > SHA256SUMS-macos.txt)
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -252,6 +248,7 @@ jobs:
             release/*.zip
             release/*.blockmap
             release/latest-mac.yml
+            release/SHA256SUMS-macos.txt
           if-no-files-found: error
           retention-days: 7
 
@@ -452,7 +449,7 @@ jobs:
             "Open-Orgo-Bot-$VERSION-x64.zip.blockmap"
             "Open-Orgo-Bot-$VERSION-x86_64.AppImage"
             Open-Orgo-Bot-amd64.deb Open-Orgo-Bot-intel.dmg Open-Orgo-Bot-setup.exe
-            Open-Orgo-Bot.AppImage Open-Orgo-Bot.dmg SHA256SUMS-ubuntu-x64.txt
+            Open-Orgo-Bot.AppImage Open-Orgo-Bot.dmg SHA256SUMS-macos.txt SHA256SUMS-ubuntu-x64.txt
           )
           for file in "${required[@]}"; do
             test -s "assets/$file" || { echo "::error::missing or empty release asset: $file"; exit 1; }
@@ -506,18 +503,35 @@ jobs:
           SHA: ${{ needs.prepare.outputs.sha }}
         run: |
           tag="v$VERSION"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$SHA" \
-              --draft --title "Open Orgo Bot $VERSION" \
-              --generate-notes
-          else
-            target=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)
-            target_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$target" --jq .sha)
-            test "$target_sha" = "$SHA" || {
-              echo "::error::$tag draft targets $target_sha, not pinned release commit $SHA"
-              exit 1
-            }
-          fi
+          ensure_draft() {
+            local repo=$1
+            shift
+            local attempt delay
+            for attempt in 1 2 3 4 5; do
+              gh release view "$tag" --repo "$repo" > /dev/null 2>&1 && return 0
+              if gh release create "$tag" --repo "$repo" "$@"; then
+                return 0
+              fi
+              # The API can create the release before a transient response
+              # failure reaches gh. Recover that success before retrying.
+              gh release view "$tag" --repo "$repo" > /dev/null 2>&1 && return 0
+              test "$attempt" -lt 5 || {
+                echo "::error::could not create $tag in $repo after $attempt attempts"
+                return 1
+              }
+              delay=$((5 << (attempt - 1)))
+              echo "::warning::release creation failed for $repo; retrying in ${delay}s ($attempt/5)"
+              sleep "$delay"
+            done
+          }
+          ensure_draft "$GITHUB_REPOSITORY" --target "$SHA" \
+            --draft --title "Open Orgo Bot $VERSION" --generate-notes
+          target=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)
+          target_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$target" --jq .sha)
+          test "$target_sha" = "$SHA" || {
+            echo "::error::$tag draft targets $target_sha, not pinned release commit $SHA"
+            exit 1
+          }
           for file in assets/*; do
             gh release upload "$tag" "$file" --repo "$GITHUB_REPOSITORY" --clobber
           done
@@ -566,10 +580,4 @@ jobs:
           GH_TOKEN="$CANONICAL_TOKEN" gh release view "v$VERSION" \
             --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft | grep -q false
           echo "v$VERSION is live on the Open Orgo Bot update feed"
-          # Publishing created the tag with this workflow's token, and GitHub
-          # starts no workflow from events that token creates. Start the two
-          # tag-driven publishes by hand, on the tag, so they see refs/tags/v*.
-          for workflow in npm-package.yml docker.yml; do
-            GH_TOKEN="$CANONICAL_TOKEN" gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref "v$VERSION"
-          done
-          echo "dispatched the npm package and Docker image publishes on v$VERSION"
+          echo "published the desktop release on v$VERSION"

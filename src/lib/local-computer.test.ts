@@ -184,9 +184,26 @@ describe("local computer UI eligibility", () => {
     })).toBe("ensure-orgo");
   });
 
-  it("never gives the orgo-native engine a passive Auto creation exception", () => {
+  it("watches instead of provisioning while a turn owns the Orgo computer", () => {
+    const cloud = { computer: "cloud" as const, configured: true, canUseCloud: true, autoLocal: true, busy: true };
+    // A running Orgo is shown as it is — its frames already stream mid-turn.
+    for (const boxState of ["ready", "idle", "running"]) {
+      expect(resolveOrgoPanelAction({ ...cloud, boxState })).toBe("attach-ready-orgo");
+    }
+    // Anything else is the turn's to create or wake; the panel waits.
+    for (const boxState of ["archived", "stopped", "provisioning", null]) {
+      expect(resolveOrgoPanelAction({ ...cloud, boxState })).toBe("busy-orgo");
+    }
+    // busy never unlocks the cloud when it is not available
+    expect(resolveOrgoPanelAction({ ...cloud, boxState: "ready", canUseCloud: false })).toBe("auto-unavailable");
+    // and Auto stays observation-only regardless of busy
+    expect(resolveOrgoPanelAction({ ...cloud, computer: undefined, boxState: "ready" })).toBe("show-ready-orgo");
+    expect(resolveOrgoPanelAction({ ...cloud, computer: undefined, boxState: null, autoLocal: false })).toBe("auto-unavailable");
+  });
+
+  it("never gives any engine a passive Auto creation exception", () => {
     // Engine kind intentionally is not an input: every engine follows the
-    // same read-only Auto rule, including boxAgent.
+    // same read-only Auto rule, regardless of the selected engine.
     expect(resolveOrgoPanelAction({
       computer: undefined,
       configured: true,
