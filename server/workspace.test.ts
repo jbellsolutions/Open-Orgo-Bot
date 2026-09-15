@@ -501,7 +501,7 @@ describe("workspace", () => {
 
   it("API drivers retain supplied memory without inventing filesystem tools", () => {
     writeMemoryFile(BOT, "# Memory\n- The user prefers CSV exports.\n");
-    for (const driver of ["grok", "openai-compat", "minimax", "boxAgent"]) {
+    for (const driver of ["grok", "openai-compat", "minimax"]) {
       expect(supportsWorkspaceFiles(driver)).toBe(false);
       const prompt = memorySystemPrompt(BOT, { fileTools: supportsWorkspaceFiles(driver) });
       expect(prompt).toContain("The user prefers CSV exports.");
@@ -510,6 +510,7 @@ describe("workspace", () => {
     }
     expect(supportsWorkspaceFiles("claudeAgent")).toBe(true);
     expect(supportsWorkspaceFiles("codex")).toBe(true);
+    expect(supportsWorkspaceFiles("boxAgent")).toBe(true);
   });
 
   it("agents MCP enables targeted memory writes without promising native file reads", () => {
