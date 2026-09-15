@@ -450,7 +450,7 @@ export function clampBytes(text: string, limit: number): string {
  * user's own machine name is a bad trade for a companion feature. */
 export function defaultHostName(machine = hostname()): string {
   const digest = createHash("sha256").update(machine).digest("hex").slice(0, 8);
-  return `openmausbot-${digest}.local`;
+  return `openorgobot-${digest}.local`;
 }
 
 /**

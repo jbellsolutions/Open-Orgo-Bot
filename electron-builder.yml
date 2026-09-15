@@ -1,9 +1,8 @@
 appId: ai.openorgobot.app
-# electron-builder uses productName verbatim as the Linux /opt directory.
-# Chromium's setuid launcher cannot re-exec an Electron binary from a path
-# containing spaces, so keep this packaging identifier compact and set the
-# human-facing name explicitly on every platform below.
-productName: OpenOrgoBot
+# macOS derives the Electron helper bundle names from productName. Keep this
+# identical to executableName or Electron cannot find its helpers at launch.
+# Linux overrides productName in its package scripts to retain /opt/OpenOrgoBot.
+productName: Open Orgo Bot
 copyright: Copyright © 2026 Open Orgo Bot contributors
 artifactName: Open-Orgo-Bot-${version}-${arch}.${ext}
 

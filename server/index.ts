@@ -9286,7 +9286,15 @@ function configStatus() {
       configured: composio.configured(cfg),
       mode: composio.connectionMode(cfg),
     },
-    orgo: { configured: Boolean(cfg.orgo?.apiKey), workspaceId: cfg.orgo?.workspaceId ?? "" },
+    orgo: {
+      configured: Boolean(cfg.orgo?.apiKey),
+      workspaceId: cfg.orgo?.workspaceId ?? "",
+      // A credential rotation can keep both public fields unchanged. This
+      // opaque process-local counter tells open computer panels to discard a
+      // stale provider error without revealing or deriving anything from the
+      // secret itself.
+      revision: orgoConnectionRevision,
+    },
     vps: { configured: Boolean(vpsSshAlias(cfg)), sshAlias: vpsSshAlias(cfg) ?? "" },
     opencodeGo: { configured: Boolean(cfg.opencodeGo?.apiKey) },
     // the chosen voice is a setting, not a secret; the key is reported the
@@ -9526,6 +9534,7 @@ async function reloadProviders() {
 // and reload sequence single-flight so two settings requests cannot drop one
 // another's changes or dispose a fleet while another reload is creating it.
 let providerConfigBusy = false;
+let orgoConnectionRevision = 0;
 const providerInstancesChanging = new Set<string>();
 let mcpConfigBusy = false;
 const MAX_CONCURRENT_MCP_PROBES = 2;
@@ -15781,6 +15790,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         throw error;
       }
+      if (changingOrgoConnection) orgoConnectionRevision += 1;
       let browserReferenceCleanupError: unknown = null;
       if (patch.signIn !== undefined) sessions.revalidateEmailSessions();
       if (!sharedComputersEnabled(cfg)) {

@@ -266,7 +266,7 @@ describe("naming", () => {
 
   it("claims a host name the system responder will not fight us for", () => {
     const name = defaultHostName("Milinds-MacBook-Pro");
-    expect(name).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
+    expect(name).toMatch(/^openorgobot-[0-9a-f]{8}\.local$/);
     // stable across restarts, distinct per machine
     expect(defaultHostName("Milinds-MacBook-Pro")).toBe(name);
     expect(defaultHostName("another-machine")).not.toBe(name);

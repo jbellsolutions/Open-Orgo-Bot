@@ -659,6 +659,7 @@ export function ComputerPanel({
     vmSupported,
     cloudSupported,
     vpsSupported,
+    state.config?.orgo?.revision,
     state.config?.vps?.sshAlias,
     panelView,
     computerSelectionPersisted,

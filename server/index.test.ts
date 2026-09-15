@@ -5388,24 +5388,25 @@ describe("harness HTTP API", () => {
 
   it("refuses a orgo token the provider rejects, at the point of pasting", async () => {
     // the stub answers 401 for anything but the good token
+    const before = await api("GET", "/api/config");
     const bad = await api("PUT", "/api/config", { orgo: { apiKey: "box_wrong" } });
     expect(bad.status).toBe(400);
     expect(String(bad.body.error)).toMatch(/rejected/i);
     const after = await api("GET", "/api/config");
-    expect(after.body.orgo).toEqual({ configured: false, workspaceId: "" });
+    expect(after.body.orgo).toEqual({ configured: false, workspaceId: "", revision: before.body.orgo.revision });
   });
 
   it("saves config keys write-only and reports booleans", async () => {
     const before = await api("GET", "/api/config");
-    expect(before.body.orgo).toEqual({ configured: false, workspaceId: "" });
+    expect(before.body.orgo).toEqual({ configured: false, workspaceId: "", revision: expect.any(Number) });
 
     const put = await api("PUT", "/api/config", { orgo: { apiKey: "box_good" } });
     expect(put.status).toBe(200);
-    expect(put.body.orgo).toEqual({ configured: true, workspaceId: "" });
+    expect(put.body.orgo).toEqual({ configured: true, workspaceId: "", revision: before.body.orgo.revision + 1 });
     expect(JSON.stringify(put.body)).not.toContain("box_good");
 
     const after = await api("GET", "/api/config");
-    expect(after.body.orgo).toEqual({ configured: true, workspaceId: "" });
+    expect(after.body.orgo).toEqual(put.body.orgo);
     expect(JSON.stringify(after.body)).not.toContain("box_good");
 
     const nothing = await api("PUT", "/api/config", {});
@@ -5431,7 +5432,7 @@ describe("harness HTTP API", () => {
 
       const rotated = await api("PUT", "/api/config", { orgo: { apiKey: " box_route_rotated " } });
       expect(rotated.status).toBe(200);
-      expect(rotated.body.orgo).toEqual({ configured: true, workspaceId: "" });
+      expect(rotated.body.orgo).toEqual({ configured: true, workspaceId: "", revision: expect.any(Number) });
       expect(JSON.stringify(rotated.body)).not.toContain("box_route_rotated");
 
       expect((await api("POST", "/api/computers/orgo/00000000-0000-4000-8000-000000000005/delete", { confirmName: name })).status).toBe(202);

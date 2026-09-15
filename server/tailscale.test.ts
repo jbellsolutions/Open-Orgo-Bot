@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyTailscaleStderr, explainTailscaleFailure, parseTailscaleStatus } from "./tailscale.ts";
+import { classifyTailscaleStderr, explainTailscaleFailure, parseTailscaleStatus, probeTailscaleStatus } from "./tailscale.ts";
 
 describe("tailscale helpers", () => {
   it("reads the MagicDNS name, addresses and state from status --json", () => {
@@ -23,5 +23,34 @@ describe("tailscale helpers", () => {
       expect(explainTailscaleFailure(reason).length).toBeGreaterThan(20);
       expect(explainTailscaleFailure(reason)).not.toContain("tskey");
     }
+  });
+
+  it("keeps probing when an earlier installed CLI cannot reach its daemon", async () => {
+    const calls: string[] = [];
+    const result = await probeTailscaleStatus(["/Applications/Tailscale.app/cli", "/opt/homebrew/bin/tailscale"], async (cli) => {
+      calls.push(cli);
+      if (cli.startsWith("/Applications")) {
+        return { ok: false, stdout: "", stderr: "Failed to load preferences.", code: 1 };
+      }
+      return {
+        ok: true,
+        stdout: JSON.stringify({
+          BackendState: "Running",
+          Self: { DNSName: "mini.tail1234.ts.net.", TailscaleIPs: ["100.64.0.7"] },
+        }),
+        stderr: "",
+        code: 0,
+      };
+    });
+
+    expect(calls).toEqual(["/Applications/Tailscale.app/cli", "/opt/homebrew/bin/tailscale"]);
+    expect(result).toEqual({
+      status: {
+        cli: "/opt/homebrew/bin/tailscale",
+        dnsName: "mini.tail1234.ts.net",
+        addresses: ["100.64.0.7"],
+        backendState: "Running",
+      },
+    });
   });
 });

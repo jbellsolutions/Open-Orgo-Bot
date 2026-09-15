@@ -55,7 +55,16 @@ export function explainTailscaleFailure(reason: TailscaleFailure): string {
   }
 }
 
-function run(cli: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; stdout: string; stderr: string; code: number | null }> {
+export interface TailscaleCommandResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  code: number | null;
+}
+
+type TailscaleRunner = (cli: string, args: string[], timeoutMs: number) => Promise<TailscaleCommandResult>;
+
+function run(cli: string, args: string[], timeoutMs: number): Promise<TailscaleCommandResult> {
   return new Promise((resolve) => {
     execFile(
       cli,
@@ -89,22 +98,37 @@ export function parseTailscaleStatus(cli: string, stdout: string): TailscaleStat
   };
 }
 
-/** Find a working Tailscale CLI and read its status. */
-export async function tailscaleStatus(): Promise<{ status: TailscaleStatus } | { failure: TailscaleFailure }> {
+/** Try every candidate until one can actually speak to its daemon. Multiple
+ * macOS installs are common; an app-bundle CLI that exists but cannot load
+ * its preferences must not hide a working Homebrew/system CLI later on. */
+export async function probeTailscaleStatus(
+  candidates: Iterable<string>,
+  execute: TailscaleRunner,
+): Promise<{ status: TailscaleStatus } | { failure: TailscaleFailure }> {
   let sawCli = false;
-  for (const cli of tailscaleCandidates()) {
-    const result = await run(cli, ["status", "--json"], 5_000);
+  let bestFailure: TailscaleFailure | null = null;
+  for (const cli of candidates) {
+    const result = await execute(cli, ["status", "--json"], 5_000);
     if (!result.ok && !result.stdout && result.code === null) continue; // not found or timed out
     sawCli = true;
     const status = parseTailscaleStatus(cli, result.stdout);
     if (status) {
-      if (status.backendState === "NeedsLogin") return { failure: "not-logged-in" };
-      if (status.backendState !== "Running") return { failure: "not-running" };
-      return { status };
+      if (status.backendState === "Running") return { status };
+      const failure = status.backendState === "NeedsLogin" ? "not-logged-in" : "not-running";
+      if (!bestFailure || bestFailure === "unknown") bestFailure = failure;
+      continue;
     }
-    if (result.stderr) return { failure: classifyTailscaleStderr(result.stderr) };
+    if (result.stderr || result.stdout) {
+      const failure = classifyTailscaleStderr(result.stderr || result.stdout);
+      if (!bestFailure || bestFailure === "unknown") bestFailure = failure;
+    }
   }
-  return { failure: sawCli ? "unknown" : "not-installed" };
+  return { failure: bestFailure ?? (sawCli ? "unknown" : "not-installed") };
+}
+
+/** Find a working Tailscale CLI and read its status. */
+export async function tailscaleStatus(): Promise<{ status: TailscaleStatus } | { failure: TailscaleFailure }> {
+  return probeTailscaleStatus(tailscaleCandidates(), run);
 }
 
 /** `tailscale serve --bg --https=<httpsPort> http://127.0.0.1:<localPort>`:

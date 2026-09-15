@@ -476,7 +476,7 @@ export interface ConfigStatus {
   budgets?: { monthlyUsd?: number; warnAtPercent?: number };
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
-  orgo: { configured: boolean; workspaceId?: string };
+  orgo: { configured: boolean; workspaceId?: string; revision?: number };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
   threads?: { maxConcurrentPerBot: number };

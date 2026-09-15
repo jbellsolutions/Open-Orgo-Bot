@@ -809,7 +809,7 @@ describe("config status frames", () => {
       configStatusFromFrame({
         xai: { configured: true },
         composio: { configured: true, mode: "managed" },
-        orgo: { configured: false },
+        orgo: { configured: false, revision: 7 },
         vps: { configured: true, sshAlias: "homelab" },
         rooms: { turnTimeoutMinutes: 20 },
         threads: { maxConcurrentPerBot: 10 },
@@ -822,7 +822,7 @@ describe("config status frames", () => {
     ).toEqual({
       xai: { configured: true },
       composio: { configured: true, mode: "managed" },
-      orgo: { configured: false },
+      orgo: { configured: false, revision: 7 },
       vps: { configured: true, sshAlias: "homelab" },
       rooms: { turnTimeoutMinutes: 20 },
       threads: { maxConcurrentPerBot: 10 },
