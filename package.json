@@ -9,9 +9,12 @@
     "url": "https://github.com/jbellsolutions/open-orgo-bot.git"
   },
   "author": {
+    "name": "Open Orgo Bot contributors"
+  },
+  "contributors": [{
     "name": "Milind Soni",
     "email": "46266943+milind-soni@users.noreply.github.com"
-  },
+  }],
   "license": "Apache-2.0",
   "desktopName": "ai.openorgobot.app.desktop",
   "type": "module",

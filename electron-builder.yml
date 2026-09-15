@@ -1,5 +1,6 @@
 appId: ai.openorgobot.app
 productName: Open Orgo Bot
+copyright: Copyright © 2026 Open Orgo Bot contributors
 artifactName: Open-Orgo-Bot-${version}-${arch}.${ext}
 
 protocols:
