@@ -1,12 +1,12 @@
 // Where a bot's hands land — and therefore where the person goes when it
 // needs them. A turn can mount two places at once (a computer plus the
 // built-in browser), which is exactly what confused people: "do this on the
-// web" landed in the cloud box's Chrome one turn and in the Browser tab the
+// web" landed in the Orgo computer's Chrome one turn and in the Browser tab the
 // next, and the "needs your hands" plea never said which. Everything that
 // decides or describes a surface lives here, so the picker, the dispatch,
 // the system prompt and the notification cannot drift apart.
 
-/** A place a bot can act. `cloud` covers both the Box and VPS backends —
+/** A place a bot can act. `cloud` covers both the Orgo and VPS backends —
  * from the person's seat they are the same "cloud computer" panel. */
 export type Surface = "cloud" | "vm" | "local" | "browser";
 
@@ -44,8 +44,8 @@ export function parseSurface(value: unknown): Surface | undefined {
 }
 
 /** The per-turn computer kinds the dispatch tracks, folded to a surface. */
-export function surfaceOfComputerKind(kind: "box" | "vps" | "vm" | "local" | null): Surface | null {
-  if (kind === "box" || kind === "vps") return "cloud";
+export function surfaceOfComputerKind(kind: "orgo" | "vps" | "vm" | "local" | null): Surface | null {
+  if (kind === "orgo" || kind === "vps") return "cloud";
   return kind;
 }
 

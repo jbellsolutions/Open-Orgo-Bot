@@ -48,7 +48,7 @@ describe("remote Cua computer setup", () => {
   it("encodes a bot display name before composing the tmux shell", () => {
     const botName = "$(touch /tmp/openmaus-pwned) `id` ' \\\"";
     const command = remoteComputerBootstrapCommand(botName);
-    const encodedBanner = Buffer.from(`  ▦ ${botName}'s computer — OpenMausBot`).toString("base64");
+    const encodedBanner = Buffer.from(`  ▦ ${botName}'s computer — Open Orgo Bot`).toString("base64");
 
     expect(command).toContain(encodedBanner);
     expect(command).not.toContain("touch /tmp/openmaus-pwned");

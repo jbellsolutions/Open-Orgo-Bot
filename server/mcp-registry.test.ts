@@ -27,14 +27,14 @@ describe("custom MCP registry", () => {
   });
 
   it("refuses harness-owned environment names in stored and renderer entries", () => {
-    for (const key of ["OMB_HARNESS_URL", "OGB_BOX_TOKEN", "ELECTRON_RUN_AS_NODE"]) {
+    for (const key of ["OMB_HARNESS_URL", "OOB_ORGO_API_KEY", "ELECTRON_RUN_AS_NODE"]) {
       expect(parseStoredMcpServer("notes", { command: "notes-mcp", env: { [key]: "bad" } })).toEqual({
         ok: false,
-        error: `Environment variable “${key}” is reserved by OpenMausBot.`,
+        error: `Environment variable “${key}” is reserved by Open Orgo Bot.`,
       });
       expect(parseMcpServerMutation("notes", { command: "notes-mcp", env: { [key]: "bad" } })).toEqual({
         ok: false,
-        error: `Environment variable “${key}” is reserved by OpenMausBot.`,
+        error: `Environment variable “${key}” is reserved by Open Orgo Bot.`,
       });
     }
   });

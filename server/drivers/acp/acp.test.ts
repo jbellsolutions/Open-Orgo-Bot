@@ -21,6 +21,7 @@ import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
 import { CursorAgentDriver } from "./cursor.ts";
+import { HermesAgentDriver } from "./hermes.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -225,7 +226,7 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.OPENCODE_API_KEY;
     delete process.env.CURSOR_API_KEY;
     delete process.env.CURSOR_AUTH_TOKEN;
-    delete process.env.BOX_TOKEN;
+    delete process.env.ORGO_API_KEY;
     delete process.env.OMB_TTS_KEY;
     delete process.env.FAKE_ACP_MODELS;
     delete process.env.FAKE_ACP_MODEL_STICKS;
@@ -451,7 +452,7 @@ describe("ACP turns (fake CLI)", () => {
     process.env.CURSOR_AUTH_TOKEN = "cursor-token-should-not-leak";
     // workspace credentials with no CLI consumer at all — held by the
     // harness (env-injected at boot by the desktop shell), used in-process
-    process.env.BOX_TOKEN = "box-should-not-leak";
+    process.env.ORGO_API_KEY = "orgo-should-not-leak";
     process.env.OMB_TTS_KEY = "tts-should-not-leak";
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "go" });
@@ -465,7 +466,7 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.OPENCODE_API_KEY).toBeUndefined();
     expect(seen.env.CURSOR_API_KEY).toBeUndefined();
     expect(seen.env.CURSOR_AUTH_TOKEN).toBeUndefined();
-    expect(seen.env.BOX_TOKEN).toBeUndefined();
+    expect(seen.env.ORGO_API_KEY).toBeUndefined();
     expect(seen.env.OMB_TTS_KEY).toBeUndefined();
   });
 
@@ -602,6 +603,34 @@ describe("ACP turns (fake CLI)", () => {
       env: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }],
     });
     expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
+  });
+
+  it("mounts the assigned Orgo computer into a Hermes turn", async () => {
+    await create(HermesAgentDriver);
+    const dump = join(scratch, "hermes-orgo-dump.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-hermes-orgo",
+      text: "inspect the desktop",
+      integrations: {
+        computer: {
+          kind: "orgo",
+          computerId: "11111111-1111-4111-8111-111111111111",
+          apiKey: "orgo-secret",
+          control: { url: "http://127.0.0.1/control", token: "control-secret" },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpServers).toContainEqual(expect.objectContaining({
+      name: "computer",
+      env: expect.arrayContaining([
+        { name: "OOB_ORGO_COMPUTER_ID", value: "11111111-1111-4111-8111-111111111111" },
+        { name: "OOB_ORGO_API_KEY", value: "orgo-secret" },
+      ]),
+    }));
+    expect(instance.adapter.capabilities.computerMcp).toBe(true);
   });
 
   it("mounts user-configured custom MCP servers after the built-ins", async () => {

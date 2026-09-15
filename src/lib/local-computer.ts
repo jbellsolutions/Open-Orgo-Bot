@@ -56,21 +56,21 @@ export function localComputerDisabledReason({
     return "Local computer control requires the desktop app.";
   }
   if (capabilities.host.platform === "win32") {
-    return "The bundled Cua Driver could not start. Restart OpenMausBot and check Diagnostics if it still fails.";
+    return "The bundled Cua Driver could not start. Restart Open Orgo Bot and check Diagnostics if it still fails.";
   }
   return "CUA Driver is not ready for local computer control.";
 }
 
 export function linuxAutoDescription(): string {
-  return "Auto reuses an existing cloud box; otherwise computer use stays off.";
+  return "Auto reuses an existing cloud orgo; otherwise computer use stays off.";
 }
 
-export type BoxPanelAction =
-  | "ensure-box"
-  | "team-box"
-  | "show-ready-box"
-  | "show-sleeping-box"
-  | "show-pending-box"
+export type OrgoPanelAction =
+  | "ensure-orgo"
+  | "team-orgo"
+  | "show-ready-orgo"
+  | "show-sleeping-orgo"
+  | "show-pending-orgo"
   | "local"
   | "unconfigured"
   | "auto-unavailable";
@@ -78,12 +78,12 @@ export type BoxPanelAction =
 const READY_BOX_STATES = new Set(["idle", "ready", "running"]);
 const SLEEPING_BOX_STATES = new Set(["archived", "stopped"]);
 
-/** Mirror the turn router's Box choice without letting a passive panel open
- * mutate infrastructure. Auto only reports an existing Box's current state;
+/** Mirror the turn router's Orgo choice without letting a passive panel open
+ * mutate infrastructure. Auto only reports an existing Orgo's current state;
  * it never creates, wakes, bootstraps, or opens one. This is deliberately
- * independent of the engine: even the box-native Computer engine needs an
+ * independent of the engine: even the orgo-native Computer engine needs an
  * explicit Cloud choice before the panel may provision. */
-export function resolveBoxPanelAction({
+export function resolveOrgoPanelAction({
   computer,
   configured,
   boxState,
@@ -97,21 +97,21 @@ export function resolveBoxPanelAction({
   canUseCloud: boolean;
   autoLocal: boolean;
   teamComputer?: boolean;
-}): BoxPanelAction {
-  // A team's explicit grant wins over Auto's private-Box/local fallback.
+}): OrgoPanelAction {
+  // A team's explicit grant wins over Auto's private-Orgo/local fallback.
   // This panel reports it; paid lifecycle and shared access stay in Team map.
-  if (computer === undefined && teamComputer) return "team-box";
+  if (computer === undefined && teamComputer) return "team-orgo";
   const explicitCloud = computer === "cloud";
 
   if (!configured) {
     if (explicitCloud) return "unconfigured";
     return autoLocal ? "local" : "auto-unavailable";
   }
-  if (explicitCloud) return canUseCloud ? "ensure-box" : "auto-unavailable";
+  if (explicitCloud) return canUseCloud ? "ensure-orgo" : "auto-unavailable";
   if (canUseCloud && boxState) {
-    if (READY_BOX_STATES.has(boxState)) return "show-ready-box";
-    if (SLEEPING_BOX_STATES.has(boxState)) return "show-sleeping-box";
-    return "show-pending-box";
+    if (READY_BOX_STATES.has(boxState)) return "show-ready-orgo";
+    if (SLEEPING_BOX_STATES.has(boxState)) return "show-sleeping-orgo";
+    return "show-pending-orgo";
   }
   return autoLocal ? "local" : "auto-unavailable";
 }
@@ -158,7 +158,7 @@ export function persistedComputerSelectionMatches({
   persistedBot: Pick<Bot, "computer" | "cloudBackend">;
 }): boolean {
   return persistedBot.computer === computer
-    && (persistedBot.cloudBackend ?? "box") === cloudBackend;
+    && (persistedBot.cloudBackend ?? "orgo") === cloudBackend;
 }
 
 export function autoSelectsLocalComputer({

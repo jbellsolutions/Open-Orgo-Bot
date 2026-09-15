@@ -25,7 +25,7 @@ export function ComposerAttachments({
   items,
   onAdd,
   onRemove,
-  onDisplayInChatBox,
+  onDisplayInChatOrgo,
   allowImages = true,
   notice,
   onNotice,
@@ -35,7 +35,7 @@ export function ComposerAttachments({
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
   onRemove: (id: string) => void;
-  onDisplayInChatBox: (attachment: PasteAttachment) => void;
+  onDisplayInChatOrgo: (attachment: PasteAttachment) => void;
   allowImages?: boolean;
   notice: string | null;
   onNotice: (notice: string | null) => void;
@@ -147,13 +147,13 @@ export function ComposerAttachments({
                 <div className="mt-1 text-[10.5px] text-ink-secondary/70">{pasteSummary(a)}</div>
                 <button
                   type="button"
-                  onClick={() => onDisplayInChatBox(a)}
+                  onClick={() => onDisplayInChatOrgo(a)}
                   className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/25 bg-accent/5 px-2 py-1.5 text-[10.5px] font-medium text-accent-text transition-colors hover:border-accent/50 hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/60"
-                  aria-label="Display pasted text in chat box"
-                  title="Display in chat box"
+                  aria-label="Display pasted text in chat orgo"
+                  title="Display in chat orgo"
                 >
                   <MessageSquareText size={12} aria-hidden="true" />
-                  <span>Display in chat box</span>
+                  <span>Display in chat orgo</span>
                 </button>
               </Chip>
             ) : a.kind === "image" ? (

@@ -2,8 +2,8 @@
 //
 // Two modes, per cua-driver's EMBEDDING.md:
 //  - "embedded" (packaged app): spawn our own private daemon via
-//    EmbeddedCuaDriverHost so TCC grants attribute to OpenMausBot and the
-//    driver inherits them. One prompt, named OpenMausBot, out of the box.
+//    EmbeddedCuaDriverHost so TCC grants attribute to Open Orgo Bot and the
+//    driver inherits them. One prompt, named Open Orgo Bot, out of the box.
 //  - "standalone" (dev): attach to an already-installed CuaDriver.app daemon
 //    (its own TCC identity, typically already granted on a dev machine).
 //
@@ -47,7 +47,7 @@ const STANDALONE_SOCKET = path.join(
   app.getPath("home"),
   "Library/Caches/cua-driver/cua-driver.sock",
 );
-const HOST_BUNDLE_ID = "com.openmausbot.app";
+const HOST_BUNDLE_ID = "ai.openorgobot.app";
 const CUA_ENV = { CUA_DRIVER_RS_TELEMETRY_ENABLED: "0" };
 const execFileAsync = promisify(execFile);
 process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ??= "0";
@@ -193,7 +193,7 @@ async function attachStandalone(signal) {
     signal.throwIfAborted();
     // Launch CuaDriver.app through LaunchServices so Accessibility /
     // Screen Recording stay on com.trycua.driver — the identity this
-    // machine already granted — instead of the freshly signed OpenMausBot.
+    // machine already granted — instead of the freshly signed Open Orgo Bot.
     const launch = execFileAsync("/usr/bin/open", ["-a", "CuaDriver"], {
       timeout: 8_000, killSignal: "SIGKILL", maxBuffer: 8_192,
     });
@@ -227,7 +227,7 @@ async function startEmbedded(binary, signal) {
   signal.throwIfAborted();
   // CUA's embedding contract requires grants before the child daemon starts;
   // these SDK calls execute in Electron main so macOS attributes them to
-  // OpenMausBot rather than to a terminal or helper process.
+  // Open Orgo Bot rather than to a terminal or helper process.
   if (process.platform === "darwin") {
     const permissionStatus = sdk.requestMacOSPermissions();
     if (!sdk.hasRequiredMacOSPermissions(permissionStatus)) {
@@ -235,7 +235,7 @@ async function startEmbedded(binary, signal) {
         !permissionStatus.accessibility && "Accessibility",
         !permissionStatus.screenRecording && "Screen Recording",
       ].filter(Boolean).join(" and ");
-      throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart OpenMausBot`);
+      throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart Open Orgo Bot`);
     }
   }
   const host = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);

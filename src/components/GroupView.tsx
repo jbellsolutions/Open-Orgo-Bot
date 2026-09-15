@@ -237,7 +237,7 @@ const Transcript = memo(function Transcript({
           // a member can hit a permission ask mid-turn; without this the
           // card never rendered here and the bot waited out its timeout.
           // `tool` distinguishes a permission from a QUESTION — a question
-          // only accepts an "answer", so routing it to the approval box
+          // only accepts an "answer", so routing it to the approval orgo
           // would offer an Allow the broker rejects. A structured ask is
           // one of those questions, and answers in its own card.
           m.kind === "secret" && m.secret && m.from?.botId ? (

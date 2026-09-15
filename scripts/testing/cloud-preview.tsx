@@ -51,8 +51,8 @@ window.fetch = async (input, init) => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
     status, headers: { "content-type": "application/json" },
   });
-  if (/^\/api\/bots\/[\w-]+\/computer$/.test(path)) return json({ configured: true, box: { state: "idle" } });
-  if (path.endsWith("/computer/provision")) return json({ state: "idle" });
+  if (/^\/api\/bots\/[\w-]+\/computer$/.test(path)) return json({ configured: true, computer: { state: "running" } });
+  if (path.endsWith("/computer/provision")) return json({ state: "running" });
   if (path.endsWith("/computer/screenshot")) {
     transport.requests++;
     if (transport.joining) transport.duringJoin++;
@@ -117,7 +117,7 @@ function Fixture() {
   useEffect(() => {
     if (bot) {
       dispatch({ type: "screenFrame", botId: bot.id, png: blank, mime: "image/png" });
-      dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "cloud", cloudBackend: "box" } });
+      dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "cloud", cloudBackend: "orgo" } });
       dispatch({ type: "toggleComputer", open: true });
     }
   }, [bot?.id, dispatch]);

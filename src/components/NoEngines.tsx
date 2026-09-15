@@ -33,7 +33,7 @@ export function NoEngines() {
         <div className="max-w-[520px] rounded-2xl border border-hairline/40 bg-card p-6 text-center">
           <h1 className="text-[20px] font-semibold text-ink">The host needs an agent engine</h1>
           <p className="mt-2 text-[13.5px] leading-relaxed text-ink-secondary">
-            Configure Claude, ACP, or another supported engine in OpenMausBot on the host computer, then return here.
+            Configure Claude, ACP, or another supported engine in Open Orgo Bot on the host computer, then return here.
           </p>
           <button onClick={() => void recheck()} disabled={rechecking} className="mt-5 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-60">
             {rechecking ? "Checking…" : "Check again"}
@@ -44,7 +44,7 @@ export function NoEngines() {
   }
 
   // Only things you actually install belong on a "get started" screen. The
-  // Box cloud runner also reports unavailable here, but it's configured with
+  // Orgo cloud runner also reports unavailable here, but it's configured with
   // a token in settings rather than installed, so listing it would just be a
   // dead end alongside the real options.
   const engines = state.instances

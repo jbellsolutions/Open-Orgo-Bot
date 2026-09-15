@@ -10,7 +10,11 @@ import { HELP } from "../control-omb.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DOCS = join(ROOT, "docs", "verification");
-const recipes = readdirSync(DOCS).filter((name) => name.endsWith(".md")).sort();
+const ENTERPRISE_WORKSPACE_ACCESS = join(ROOT, "enterprise", "server", "workspace-access.ts");
+const hasEnterpriseLayer = existsSync(ENTERPRISE_WORKSPACE_ACCESS);
+const recipes = readdirSync(DOCS)
+  .filter((name) => name.endsWith(".md") && (hasEnterpriseLayer || name !== "hosted-workspaces.md"))
+  .sort();
 const text = (recipe: string) => readFileSync(join(DOCS, recipe), "utf8");
 // Paths inside external links belong to other repositories.
 const withoutUrls = (markdown: string) => markdown.replace(/https?:\/\/\S+/g, " ");
@@ -29,7 +33,7 @@ helpVerbs.add("help");
 
 const serverSource = readFileSync(join(ROOT, "server", "index.ts"), "utf8");
 const hooksSource = readFileSync(join(ROOT, "server", "webhook-ingress.ts"), "utf8");
-const hostedSource = readFileSync(join(ROOT, "enterprise", "server", "workspace-access.ts"), "utf8");
+const hostedSource = hasEnterpriseLayer ? readFileSync(ENTERPRISE_WORKSPACE_ACCESS, "utf8") : "";
 // Only constants named in the public handler's accepted-path guard are routes.
 // Outbound post("/api/handoff/...") calls belong to the identity service, not us.
 const hostedConstants = new Map([...hostedSource.matchAll(/const ([A-Z_]+) = "(\/api\/[^"\n]+)";/g)].map(match => [match[1]!, match[2]!]));
@@ -82,7 +86,7 @@ describe("docs/verification recipes cite things that exist", () => {
     expect([...new Set(refs.filter((hit) => !registered(target(hit))))]).toEqual([]);
   });
 
-  it("distinguishes delegated public routes from external identity backchannels", () => {
+  it.skipIf(!hasEnterpriseLayer)("distinguishes delegated public routes from external identity backchannels", () => {
     expect([...hostedPublicRoutes]).toEqual(["/api/auth/hosted/start", "/api/auth/hosted/callback"]);
     expect(hostedPublicRoutes.has("/api/handoff/consume")).toBe(false);
     expect(hostedPublicRoutes.has("/api/handoff/check")).toBe(false);

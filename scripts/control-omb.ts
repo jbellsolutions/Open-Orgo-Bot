@@ -52,7 +52,7 @@ export const HELP_UI = `renderer (needs a ui launch handle; every verb takes --u
   ui wait-settle --ui HANDLE [--timeout 30]
   ui help`;
 
-export const HELP = `control-omb — verify a running OpenMausBot instance through its shared MCP core
+export const HELP = `control-omb — verify a running Open Orgo Bot instance through its shared MCP core
 
 read-only:
   doctor [--url URL]
@@ -127,7 +127,7 @@ function configuredUrl(raw: unknown, env: NodeJS.ProcessEnv, requiredForMutation
   if (!explicit) {
     if (requiredForMutation) {
       throw new ControlOmbError(
-        "mutating commands require an explicit OpenMausBot instance",
+        "mutating commands require an explicit Open Orgo Bot instance",
         "start `control-omb launch`, then pass its URL with --url",
       );
     }
@@ -337,15 +337,15 @@ export async function launchVerificationServer(
   room?: { scripted: boolean },
   /** Optional repository-owned fake providers for multi-engine setup checks. */
   extraProviders: Array<"codex"> = [],
-  /** Programmatic tests only: an owned loopback Box provider, never a live account. */
-  boxFixtureApi?: string,
+  /** Programmatic tests only: an owned loopback Orgo provider, never a live account. */
+  orgoFixtureApi?: string,
 ): Promise<VerificationServer> {
-  if (boxFixtureApi) {
-    if (!/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}$/.test(boxFixtureApi)) {
-      throw new ControlOmbError("Box verification requires an explicit loopback HTTP provider");
+  if (orgoFixtureApi) {
+    if (!/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}$/.test(orgoFixtureApi)) {
+      throw new ControlOmbError("Orgo verification requires an explicit loopback HTTP provider");
     }
-    try { new URL(boxFixtureApi); }
-    catch { throw new ControlOmbError("Box verification requires a valid loopback port"); }
+    try { new URL(orgoFixtureApi); }
+    catch { throw new ControlOmbError("Orgo verification requires a valid loopback port"); }
   }
   if (localVm) {
     const endpoint = new URL(localVm.host);
@@ -366,7 +366,7 @@ export async function launchVerificationServer(
   mkdirSync(evidenceDir, { recursive: true });
   const logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
-    ...(boxFixtureApi ? { box: { token: "box_verification_fixture" } } : {}),
+    ...(orgoFixtureApi ? { orgo: { apiKey: "orgo_verification_fixture", workspaceId: "10000000-0000-4000-8000-000000000001" } } : {}),
     instances: {
       ...(extraProviders.includes("codex") ? { codex: {
         driver: "codex", displayName: "Verification Codex", config: { cli: fileURLToPath(new URL("../server/testing/fake-codex-app-server.ts", import.meta.url)) },
@@ -432,7 +432,7 @@ export async function launchVerificationServer(
     OMB_AGENT_BROWSER_PATH: browser.binaryPath,
     AGENT_BROWSER_EXECUTABLE_PATH: browser.executablePath,
   });
-  if (boxFixtureApi) childEnv.OMB_BOX_API = boxFixtureApi;
+  if (orgoFixtureApi) childEnv.OOB_ORGO_API = orgoFixtureApi;
   const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: childEnv,

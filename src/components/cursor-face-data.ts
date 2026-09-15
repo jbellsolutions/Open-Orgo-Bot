@@ -9,7 +9,7 @@
  * place (MausFaceData.swift vs MausAvatar.swift).
  */
 
-/** The face box every coordinate in this file is expressed in. */
+/** The face orgo every coordinate in this file is expressed in. */
 export const FACE_BOX = 228.541
 
 /** Face-space centre the expressions are normalised around. */

@@ -25,8 +25,8 @@ class ProfileRoutinePolicyTest {
 
     @Test
     fun cloudRunAvailabilityMatchesDesktopRequirements() {
-        val configured = decodeConfig("""{"box":{"configured":true}}""")
-        val unconfigured = decodeConfig("""{"box":{"configured":false}}""")
+        val configured = decodeConfig("""{"orgo":{"configured":true}}""")
+        val unconfigured = decodeConfig("""{"orgo":{"configured":false}}""")
         val available = decodeInstances("available")
         val unavailable = decodeInstances("unavailable")
 
@@ -139,9 +139,10 @@ class ProfileRoutinePolicyTest {
 
     private fun decodeInstances(state: String): List<Instance> = CompanionJson.decodeFromString<InstanceList>(
         """{"instances":[{
-          "instanceId":"box-1","driverKind":"boxAgent",
+          "instanceId":"hermes","driverKind":"acp",
           "snapshot":{"state":"$state"},
-          "models":{"default":"model-1","options":[]}
+          "models":{"default":"model-1","options":[]},
+          "capabilities":{"computerMcp":true}
         }]}""",
     ).instances
 }

@@ -1,4 +1,4 @@
-// The question box: what the bot actually asked, and its own answers.
+// The question orgo: what the bot actually asked, and its own answers.
 //
 // This is the card for a structured ask — Claude's AskUserQuestion. The
 // provider routes it through the permission channel, so without this it

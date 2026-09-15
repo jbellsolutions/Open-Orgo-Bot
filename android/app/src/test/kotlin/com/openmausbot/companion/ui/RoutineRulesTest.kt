@@ -307,10 +307,10 @@ class RoutineRulesTest {
     @Test
     fun `Cloud VM availability is derived from the paired-safe status only`() {
         val instances = listOf(
-            instance(driverKind = "boxAgent", state = "available"),
+            instance(driverKind = "acp", state = "available", computerMcp = true),
             instance(driverKind = "local", state = "available"),
         )
-        val configured = ConfigStatus(box = ConfigFlag(configured = true))
+        val configured = ConfigStatus(orgo = ConfigFlag(configured = true))
 
         assertTrue(RoutineRunAvailability(configured, instances).cloudReady)
         assertFalse(RoutineRunAvailability(configured, emptyList()).cloudReady)
@@ -318,9 +318,9 @@ class RoutineRulesTest {
         assertFalse(
             RoutineRunAvailability(
                 configured,
-                listOf(instance(driverKind = "boxAgent", state = "unavailable")),
+                listOf(instance(driverKind = "acp", state = "unavailable", computerMcp = true)),
             ).cloudReady,
-            "a Box agent that is not available is not a Cloud VM to run on",
+            "an unavailable cloud-capable agent is not a Cloud VM to run on",
         )
     }
 
@@ -906,10 +906,11 @@ class RoutineRulesTest {
         createdAt = 0.0,
     )
 
-    private fun instance(driverKind: String, state: String) = Instance(
+    private fun instance(driverKind: String, state: String, computerMcp: Boolean = false) = Instance(
         instanceId = "instance-$driverKind",
         driverKind = driverKind,
         snapshot = ProviderSnapshot(state = state),
         models = ModelCatalog(defaultModel = "model-1", options = emptyList()),
+        capabilities = InstanceCapabilities(computerMcp = computerMcp),
     )
 }

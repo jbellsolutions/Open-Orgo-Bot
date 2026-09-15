@@ -47,7 +47,7 @@ export type RoutineScheduleInput =
   | Exclude<RoutineSchedule, RoutineIntervalSchedule>
   | RoutineIntervalScheduleInput;
 
-/** `cloud` runs the agent itself inside the bot's Box VM. `maus` keeps
+/** `cloud` gives the agent its bot-scoped Orgo computer. `maus` keeps
  * using the provider selected on the MAUS and only borrows its configured
  * computer tools, if any. */
 export type RoutineRunOn = "maus" | "cloud";
@@ -812,7 +812,7 @@ export class RoutineManager {
       if (run.status === "running" || run.status === "waiting") {
         run.status = "failed";
         if (run.target === "room-goal") run.goalStatus = "failed";
-        run.error = "OpenMausBot restarted while this routine was running";
+        run.error = "Open Orgo Bot restarted while this routine was running";
         run.attention = undefined;
         run.finishedAt = this.now();
         recovered.push(cloneRun(run));

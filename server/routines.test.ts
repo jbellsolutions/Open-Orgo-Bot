@@ -765,7 +765,7 @@ describe("RoutineManager", () => {
         routineName: "Morning brief",
         status: "failed",
         threadId: "thread-1",
-        error: "OpenMausBot restarted while this routine was running",
+        error: "Open Orgo Bot restarted while this routine was running",
       },
     ]);
   });

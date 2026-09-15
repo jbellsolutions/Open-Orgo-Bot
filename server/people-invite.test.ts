@@ -1,5 +1,5 @@
 // End to end: adding people to a hosted workspace. The owner bootstraps the
-// first admin from the box, that admin signs in with an emailed code (the
+// first admin from the orgo, that admin signs in with an emailed code (the
 // control plane is stubbed) and, through the same requests Settings → People
 // sends, invites a member, promotes them and removes them, immediately ending
 // their account sessions. Everything the People card reads answers in the shape it renders.
@@ -73,7 +73,7 @@ function send(path: string, init: CallInit, headers: Record<string, string>): Pr
   });
 }
 
-/** The box itself: a loopback Host and Origin, nothing forwarded. This is the
+/** The orgo itself: a loopback Host and Origin, nothing forwarded. This is the
  * owner, the way `openmausbot` on the server or a bootstrap script talks. */
 const owner = (path: string, init: CallInit = {}) => send(path, init, { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` });
 
@@ -102,11 +102,11 @@ beforeAll(async () => {
   stub = await startControlPlaneStub();
   home = mkdtempSync(join(tmpdir(), "omb-people-invite-"));
   const staticDir = join(home, "static");
-  mkdirSync(join(home, ".openmausbot"), { recursive: true });
+  mkdirSync(join(home, ".openorgobot"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
   writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Served UI</title>");
   // No sign-in list on disk and none in the environment: nobody is welcome yet.
-  writeFileSync(join(home, ".openmausbot", "config.json"), JSON.stringify({ instances: { fixture: { driver: "people-invite-test-shadow" } } }));
+  writeFileSync(join(home, ".openorgobot", "config.json"), JSON.stringify({ instances: { fixture: { driver: "people-invite-test-shadow" } } }));
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {

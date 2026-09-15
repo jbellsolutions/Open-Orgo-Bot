@@ -17,6 +17,8 @@ const CONNECTION_SCHEMA_VERSION = 1;
 // Those builds could start Cua without the Xorg seat-safety flags; keeping the
 // opt-in versioned makes a newer build unable to arm an older installed copy.
 const SETTINGS_SCHEMA_VERSION = 2;
+// This is the certified helper protocol identity, not the Electron app's
+// distributable bundle identifier. Keep it stable for the pinned CUA binary.
 const HOST_BUNDLE_ID = "com.openmausbot.app";
 const CERTIFIED_CONTRACT_VERSION = "0.6.0";
 const CERTIFIED_TOOLS_LIST_SCHEMA_VERSION = "1";

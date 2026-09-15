@@ -1,4 +1,4 @@
-# OpenMausBot harness server — hosted/self-hosted tenant image.
+# Open Orgo Bot harness server — hosted/self-hosted tenant image.
 #
 # Two stages: build the renderer + the self-contained server bundle, then ship
 # only those artifacts on a slim Node runtime. The server keeps binding
@@ -10,7 +10,7 @@
 #   docker build --build-arg ENGINES="@anthropic-ai/claude-code @openai/codex" -t openmausbot .
 #
 # HOME is the /data volume, so engine CLI logins (~/.claude, ~/.codex, ...) and
-# OpenMausBot's own state (~/.openmausbot) persist across container restarts.
+# Open Orgo Bot's own state (~/.openmausbot) persist across container restarts.
 
 FROM node:24-bookworm-slim AS build
 WORKDIR /src

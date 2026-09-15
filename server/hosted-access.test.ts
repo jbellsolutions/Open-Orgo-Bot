@@ -1,7 +1,7 @@
 // Owned full server, disposable data, dynamically loaded enterprise hook.
 // The HTTPS backchannel is injected, never redirected to a real portal.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { request, type IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,6 +12,7 @@ import { SessionRegistry } from "./sessions.ts";
 import { HOSTED_CONTRACT_HEADER, HOSTED_CONTRACT_METADATA } from "./hosted-contract.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const ENTERPRISE_WORKSPACE_ACCESS = join(ROOT, "enterprise/server/workspace-access.ts");
 const PORT = 35000 + Math.floor(Math.random() * 5000);
 const HOST = "acme.example.test";
 const EMAIL = "member@example.test";
@@ -54,9 +55,10 @@ async function restart(env: NodeJS.ProcessEnv = {}) {
 }
 
 beforeAll(async () => {
+  if (!existsSync(ENTERPRISE_WORKSPACE_ACCESS)) return;
   home = mkdtempSync(join(tmpdir(), "omb-hosted-server-"));
   stateFile = join(home, "portal-fixture.json"); state();
-  const data = join(home, ".openmausbot");
+  const data = join(home, ".openorgobot");
   const layer = join(home, "enterprise");
   mkdirSync(join(layer, "server"), { recursive: true });
   mkdirSync(join(home, "static"));
@@ -99,9 +101,13 @@ beforeAll(async () => {
   }
   throw new Error(`Owned hosted fixture failed to start:\n${log}`);
 }, 30_000);
-afterAll(async () => { await waitForExit(child, { signal: "SIGTERM" }); await removeTempDir(home); });
+afterAll(async () => {
+  if (!existsSync(ENTERPRISE_WORKSPACE_ACCESS)) return;
+  await waitForExit(child, { signal: "SIGTERM" });
+  await removeTempDir(home);
+});
 
-describe("hosted bridge in the full server", () => {
+describe.skipIf(!existsSync(ENTERPRISE_WORKSPACE_ACCESS))("hosted bridge in the full server", () => {
   it("loads the optional hook before listening, redirects hosted navigation, and disables legacy sign-in", async () => {
     expect(log).toContain("enterprise edition for Fixture");
     expect((await call("/")).location).toBe("/api/auth/hosted/start");
@@ -157,7 +163,7 @@ describe("hosted bridge in the full server", () => {
   it("uses explicit portal membership without local allow-list synchronization and still revokes quiet streams", async () => {
     await waitForExit(child, { signal: "SIGTERM" });
     state();
-    writeFileSync(join(home, ".openmausbot", "config.json"), JSON.stringify({ signIn: { admins: [], members: [] }, instances: { fixture: { driver: "hosted-access-test-shadow" } } }));
+    writeFileSync(join(home, ".openorgobot", "config.json"), JSON.stringify({ signIn: { admins: [], members: [] }, instances: { fixture: { driver: "hosted-access-test-shadow" } } }));
     child = spawn(process.execPath, [join(ROOT, "server/index.ts")], { cwd: ROOT, env: { ...fixtureEnv, OMB_ADMIN_MEMBERSHIP: "portal" }, stdio: ["ignore", "pipe", "pipe"] });
     child.stderr?.on("data", (chunk) => log += chunk);
     await expect.poll(async () => {

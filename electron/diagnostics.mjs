@@ -17,7 +17,8 @@ export const CREDENTIAL_ENV_NAMES = [
   "OMB_ANTHROPIC_API_URL",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
-  "BOX_TOKEN",
+  "ORGO_API_KEY",
+  "ORGO_WORKSPACE_ID",
   "OPENCODE_API_KEY",
   "OMB_TTS_KEY",
   "OMB_OPENAI_IMAGE_KEY",
@@ -283,7 +284,7 @@ export function buildDiagnosticsReport({
   now = new Date().toISOString(),
 } = {}) {
   const lines = [];
-  lines.push("OpenMausBot diagnostics");
+  lines.push("Open Orgo Bot diagnostics");
   lines.push(`Generated: ${now}`);
   lines.push("");
   lines.push("## App");

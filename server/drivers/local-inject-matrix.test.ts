@@ -481,6 +481,9 @@ describe("Qwen / Hermes ACP turns", () => {
       expect(seen.argv).toEqual(["acp"]);
       expect(seen.env.OPENAI_API_KEY).toBeUndefined();
       expect(seen.env.OPENROUTER_API_KEY).toBeUndefined();
+      expect(seen.env.HERMES_ACP_SKIP_CONFIGURED_MCP).toBe("1");
+      expect(seen.env.HERMES_SAFE_MODE).toBe("1");
+      expect(seen.env.HERMES_IGNORE_USER_CONFIG).toBeUndefined();
       const configCalls = JSON.parse(readFileSync(`${dump}.config.json`, "utf8")) as Array<{
         method: string;
         params: { modelId?: string };

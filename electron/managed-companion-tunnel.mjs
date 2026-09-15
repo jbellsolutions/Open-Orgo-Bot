@@ -174,7 +174,7 @@ function processIsAlive(pid) {
 const currentUserId = () =>
   process.platform === "win32" ? undefined : (process.getuid?.() ?? os.userInfo().uid);
 
-/** Remove only token files created by a dead OpenMausBot process. Suspicious
+/** Remove only token files created by a dead Open Orgo Bot process. Suspicious
  * paths are preserved instead of broadening cleanup around a secret. */
 export function cleanupStaleManagedCompanionTokens(
   runtimeRoot,

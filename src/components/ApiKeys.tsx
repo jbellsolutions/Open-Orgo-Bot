@@ -8,7 +8,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 
-export type ConfigSection = "composio" | "box" | "opencodeGo" | "anthropic" | "openaiCompat" | "xai";
+export type ConfigSection = "composio" | "orgo" | "opencodeGo" | "anthropic" | "openaiCompat" | "xai";
 /** Sections whose key can be tried against the provider from the server. */
 export type TestableProvider = "anthropic" | "openaiCompat" | "xai";
 
@@ -20,7 +20,7 @@ const SECTIONS: Record<
     body: (v) => ({ composio: { apiKey: v } }),
     flag: (c) => c.composio.configured,
   },
-  box: { body: (v) => ({ box: { token: v } }), flag: (c) => c.box.configured },
+  orgo: { body: (v) => ({ orgo: { apiKey: v } }), flag: (c) => c.orgo.configured },
   opencodeGo: { body: (v) => ({ opencodeGo: { apiKey: v } }), flag: (c) => c.opencodeGo?.configured ?? false },
   anthropic: { body: (v) => ({ anthropic: { key: v } }), flag: (c) => c.anthropic?.configured ?? false },
   openaiCompat: { body: (v) => ({ openaiCompat: { key: v } }), flag: (c) => c.openaiCompat?.configured ?? false },
@@ -29,9 +29,9 @@ const SECTIONS: Record<
 
 // Provider keys have no desktop-shell slot yet and go through the server's
 // own 0600 config, the same place they live on a hosted server.
-const ELECTRON_CREDENTIAL: Partial<Record<ConfigSection, "composioApiKey" | "boxToken" | "opencodeGoApiKey">> = {
+const ELECTRON_CREDENTIAL: Partial<Record<ConfigSection, "composioApiKey" | "orgoApiKey" | "opencodeGoApiKey">> = {
   composio: "composioApiKey",
-  box: "boxToken",
+  orgo: "orgoApiKey",
   opencodeGo: "opencodeGoApiKey",
 };
 
@@ -57,14 +57,14 @@ const CREDENTIALS: Record<
     linkLabelKey: "keys.composio.link",
     optional: true,
   },
-  box: {
-    labelKey: "keys.box.label",
-    placeholderKey: "keys.box.placeholder",
-    descriptionKey: "keys.box.desc",
-    href: "https://docs.ascii.dev/box/api-keys",
-    linkLabelKey: "keys.box.link",
+  orgo: {
+    labelKey: "keys.orgo.label",
+    placeholderKey: "keys.orgo.placeholder",
+    descriptionKey: "keys.orgo.desc",
+    href: "https://www.orgo.ai/workspaces",
+    linkLabelKey: "keys.orgo.link",
     optional: true,
-    warningKey: "keys.box.warning",
+    warningKey: "keys.orgo.warning",
   },
   opencodeGo: {
     labelKey: "keys.opencode.label",
@@ -319,6 +319,72 @@ export function ApiKeyRow({
   );
 }
 
+interface OrgoWorkspaceRow {
+  id: string;
+  name: string;
+  status: string;
+}
+
+/** Non-secret destination for newly created Orgo computers. */
+export function OrgoWorkspace() {
+  const { state, dispatch } = useStore();
+  const configured = state.config?.orgo.configured === true;
+  const selected = state.config?.orgo.workspaceId ?? "";
+  const [workspaces, setWorkspaces] = useState<OrgoWorkspaceRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!configured) {
+      setWorkspaces([]);
+      setError(null);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    api("/api/orgo/workspaces")
+      .then((result: { workspaces?: OrgoWorkspaceRow[] }) => {
+        if (alive) setWorkspaces(Array.isArray(result.workspaces) ? result.workspaces : []);
+      })
+      .catch((cause) => { if (alive) setError(cause instanceof Error ? cause.message : String(cause)); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [configured, selected]);
+
+  if (!configured) return null;
+  const value = selected || workspaces.find((workspace) => workspace.status === "active")?.id || workspaces[0]?.id || "";
+  const save = (workspaceId: string) => {
+    if (!workspaceId || saving || workspaceId === selected) return;
+    setSaving(true);
+    setError(null);
+    api("/api/config", { method: "PUT", body: JSON.stringify({ orgo: { workspaceId } }) })
+      .then((status: ConfigStatus) => dispatch({ type: "configStatus", config: status }))
+      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <div>
+      <div className="mb-1.5 text-[13px] text-ink-secondary">Orgo workspace</div>
+      <select
+        value={value}
+        disabled={loading || saving || workspaces.length === 0}
+        onChange={(event) => save(event.target.value)}
+        aria-label="Orgo workspace"
+        className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus:border-hairline focus:outline-none disabled:opacity-60"
+      >
+        {loading && <option value="">Loading workspaces…</option>}
+        {!loading && workspaces.length === 0 && <option value="">No workspace available</option>}
+        {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+      </select>
+      <div className="mt-1 text-[11px] text-ink-secondary">New cloud computers are created in this workspace.</div>
+      {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
+    </div>
+  );
+}
+
 /** Non-secret Docker-over-SSH target. Keys and passwords stay with SSH. */
 export function VpsConnection() {
   const { state, dispatch } = useStore();
@@ -360,7 +426,7 @@ export function VpsConnection() {
       <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">
         {t("keys.vps.descBefore")}
         <a
-          href="https://github.com/milind-soni/OpenMausBot/blob/main/docs/byo-vps.md"
+          href="https://github.com/jbellsolutions/open-orgo-bot/blob/main/docs/byo-vps.md"
           target="_blank"
           rel="noopener noreferrer"
           className="text-accent hover:underline"

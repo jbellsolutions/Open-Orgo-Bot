@@ -238,15 +238,15 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); });`
 test("a protected directory spelled in another case is still refused", async t => {
   const { dir, folder, grant, run } = await fixture(t);
   if (!(await spellings(dir)).case) return t.skip("this filesystem is case-sensitive, so no case variant names the same directory");
-  await mkdir(path.join(dir, "OpenMausBot"));
-  await writeFile(path.join(dir, "OpenMausBot", "credentials.bin"), "credential blob");
-  grant.protectedPaths = [path.join(dir, "OpenMausBot")];
+  await mkdir(path.join(dir, "Open Orgo Bot"));
+  await writeFile(path.join(dir, "Open Orgo Bot", "credentials.bin"), "credential blob");
+  grant.protectedPaths = [path.join(dir, "Open Orgo Bot")];
   folder.write = true;
-  await assert.rejects(run({ action: "read_file", path: "OpenMausBot/credentials.bin" }), /Desktop credentials/);
-  await assert.rejects(run({ action: "read_file", path: "openmausbot/credentials.bin" }), /Desktop credentials/);
-  await assert.rejects(run({ action: "read_file", path: "OPENMAUSBOT/credentials.bin" }), /Desktop credentials/);
-  await assert.rejects(run({ action: "list_files", path: "openmausbot" }), /Desktop credentials/);
-  await assert.rejects(run({ action: "write_file", path: "openmausbot/computer-sharing.json", content: "{}" }), /sharing settings/);
+  await assert.rejects(run({ action: "read_file", path: "Open Orgo Bot/credentials.bin" }), /Desktop credentials/);
+  await assert.rejects(run({ action: "read_file", path: "open orgo bot/credentials.bin" }), /Desktop credentials/);
+  await assert.rejects(run({ action: "read_file", path: "OPEN ORGO BOT/credentials.bin" }), /Desktop credentials/);
+  await assert.rejects(run({ action: "list_files", path: "open orgo bot" }), /Desktop credentials/);
+  await assert.rejects(run({ action: "write_file", path: "open orgo bot/computer-sharing.json", content: "{}" }), /sharing settings/);
 });
 
 test("a protected directory spelled in another Unicode normalization is still refused", async t => {
@@ -375,11 +375,11 @@ test("filesystem identities keep all 64 bits instead of rounding distinct inode 
 test("the harness data directory is protected through a broad share", async t => {
   const { dir } = await fixture(t);
   const shared = path.join(dir, "share");
-  const dataDir = path.join(shared, ".openmausbot");
+  const dataDir = path.join(shared, ".openorgobot");
   await mkdir(dataDir, { recursive: true });
   await writeFile(path.join(dataDir, "config.json"), JSON.stringify({ anthropicApiKey: "sk-fixture" }));
   const stub = stubWorkspace();
-  stub.state.work.push({ action: "read_file", path: ".openmausbot/config.json" });
+  stub.state.work.push({ action: "read_file", path: ".openorgobot/config.json" });
   const sharing = createComputerSharing({
     file: path.join(dir, "profile", "computer-sharing.json"), fetch: stub.fetchImpl,
     environments: () => [stub.env], enabled: async () => true, cuaConnection: async () => null, protectedPaths: [dataDir],
@@ -401,7 +401,7 @@ test("a harness data directory that does not exist yet still saves and connects"
   stub.state.work.push({ action: "read_file", path: "note.txt" });
   const sharing = createComputerSharing({
     file: path.join(dir, "profile", "computer-sharing.json"), fetch: stub.fetchImpl,
-    environments: () => [stub.env], enabled: async () => true, cuaConnection: async () => null, protectedPaths: [path.join(dir, "never-installed", ".openmausbot")],
+    environments: () => [stub.env], enabled: async () => true, cuaConnection: async () => null, protectedPaths: [path.join(dir, "never-installed", ".openorgobot")],
   });
   t.after(() => sharing.close());
   const info = await sharing.identity(stub.env);

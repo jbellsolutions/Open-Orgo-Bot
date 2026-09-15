@@ -418,7 +418,7 @@ const support: AcpSupport = {
   resolveModels: (env: Record<string, string | undefined>, config: any) => resolveModels(env, config),
   resolveTurnModel: (model, env) => {
     // Never inherit a broad or stale compatibility grant from the parent.
-    // Only this OpenMaus driver binds one concrete local model; Hermes still
+    // Only this Open Orgo Bot driver binds one concrete local model; Hermes still
     // requires the exact read-only screenshot MCP tool before activation.
     bindHermesScreenshotCompat(env, model);
     if (!model) return model;
@@ -444,6 +444,18 @@ const support: AcpSupport = {
     // named custom provider + session/set_model is the real route.
     delete env.OPENAI_API_KEY;
     delete env.OPENROUTER_API_KEY;
+
+    // Open Orgo Bot supplies the MCP surface for each bot through ACP's
+    // session/new request. Do not also start every MCP server in the user's
+    // global Hermes config: one stale OAuth server can terminate a headless
+    // ACP process before session/new returns, and duplicate computer/tool
+    // servers would escape the bot's configured permissions. HERMES_SAFE_MODE
+    // suppresses configured MCP/plugin discovery without setting
+    // HERMES_IGNORE_USER_CONFIG, so Hermes still reads the user's selected
+    // model, provider, and authentication. Explicit per-session MCP servers
+    // continue to register normally.
+    env.HERMES_ACP_SKIP_CONFIGURED_MCP = "1";
+    env.HERMES_SAFE_MODE = "1";
   },
   pickAuthMethod: () => null,
   authFailure: "continue",

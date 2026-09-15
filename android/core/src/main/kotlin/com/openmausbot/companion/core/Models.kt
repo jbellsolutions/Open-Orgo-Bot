@@ -661,6 +661,7 @@ data class Instance(
 data class InstanceCapabilities(
     val images: Boolean? = null,
     val effortLevels: List<String>? = null,
+    val computerMcp: Boolean? = null,
     /**
      * The engine can take a message into a turn that is already running.
      * Engines without it hold mid-turn sends until the turn settles, which is
@@ -695,7 +696,7 @@ data class Profile(val name: String, val email: String)
 @Serializable
 data class ConfigStatus(
     val composio: ConfigFlag? = null,
-    val box: ConfigFlag? = null,
+    val orgo: ConfigFlag? = null,
     val tts: ConfigFlag? = null,
     val imageGen: ConfigFlag? = null,
     val profile: Profile? = null,
@@ -1053,9 +1054,9 @@ data class RoutineRunAvailability(
     val cloudInstanceAvailable: Boolean,
 ) {
     constructor(config: ConfigStatus?, instances: List<Instance>) : this(
-        cloudConfigured = config?.box?.configured == true,
+        cloudConfigured = config?.orgo?.configured == true,
         cloudInstanceAvailable = instances.any {
-            it.driverKind == "boxAgent" && it.snapshot.isAvailable
+            it.capabilities?.computerMcp == true && it.snapshot.isAvailable
         },
     )
 

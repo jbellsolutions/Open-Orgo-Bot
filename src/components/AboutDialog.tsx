@@ -1,4 +1,4 @@
-// "About OpenMausBot" — the version you are running and where to go next.
+// "About Open Orgo Bot" — the version you are running and where to go next.
 // Small on purpose: the interesting settings live in the settings panel, and
 // this exists so a bug report can quote a version number.
 import { useEffect, useRef } from "react";
@@ -45,7 +45,7 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
         aria-labelledby="about-dialog-title"
         className="w-full max-w-[360px] rounded-2xl border border-hairline/50 bg-panel p-6 text-center shadow-2xl"
       >
-        <img src="/app-icon.svg" alt="" width={56} height={56} className="mx-auto size-14" />
+        <img src="/app-icon.png" alt="" width={56} height={56} className="mx-auto size-14" />
         <h2 id="about-dialog-title" className="mt-3 text-[17px] font-semibold text-ink">
           {APP_NAME}
         </h2>

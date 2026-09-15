@@ -13,7 +13,7 @@ import {
 
 const MAPPINGS: Array<[CredentialTargetId, CredentialConfig]> = [
   ["xaiApiKey", { xai: { key: "secret" } }],
-  ["boxToken", { box: { token: "secret" } }],
+  ["orgoApiKey", { orgo: { apiKey: "secret" } }],
   ["opencodeGoApiKey", { opencodeGo: { apiKey: "secret" } }],
   ["ttsKey", { tts: { key: "secret" } }],
   ["openaiImageApiKey", { imageGen: { key: "secret" } }],

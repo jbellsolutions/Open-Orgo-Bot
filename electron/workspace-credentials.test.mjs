@@ -19,7 +19,7 @@ describe("workspace credential migration", () => {
   it("moves every plaintext secret into the store and deletes the field", () => {
     const config = {
       xai: { key: "xai-secret", url: "https://api.example.test/v1" },
-      box: { token: "box-secret" },
+      orgo: { apiKey: "orgo-secret" },
       tts: { key: "tts-secret", voice: "narrator" },
       imageGen: { key: "image-secret" },
       opencodeGo: { apiKey: "ocg-secret" },
@@ -30,7 +30,7 @@ describe("workspace credential migration", () => {
     expect(result.credentialsChanged).toBe(true);
     expect(result.credentials).toEqual({
       xaiApiKey: "xai-secret",
-      boxToken: "box-secret",
+      orgoApiKey: "orgo-secret",
       ttsKey: "tts-secret",
       opencodeGoApiKey: "ocg-secret",
       openaiImageApiKey: "image-secret",
@@ -39,7 +39,7 @@ describe("workspace credential migration", () => {
     // non-secret siblings (endpoint url, chosen voice) stay in the file
     expect(result.config).toEqual({
       xai: { url: "https://api.example.test/v1" },
-      box: {},
+      orgo: {},
       tts: { voice: "narrator" },
       imageGen: {},
       opencodeGo: {},
@@ -65,11 +65,11 @@ describe("workspace credential migration", () => {
     // mid-session key change: the server persisted the new key to config.json;
     // the stale stored secret must not win at the next boot
     const result = migrateWorkspaceCredentials(
-      { box: { token: "box-NEW" } },
-      { boxToken: "box-OLD", xaiApiKey: "xai-keep" },
+      { orgo: { apiKey: "orgo-NEW" } },
+      { orgoApiKey: "orgo-OLD", xaiApiKey: "xai-keep" },
     );
-    expect(result.credentials).toEqual({ boxToken: "box-NEW", xaiApiKey: "xai-keep" });
-    expect(result.config.box).toEqual({});
+    expect(result.credentials).toEqual({ orgoApiKey: "orgo-NEW", xaiApiKey: "xai-keep" });
+    expect(result.config.orgo).toEqual({});
   });
 
   it("treats an empty saved value as no information and keeps the stored secret", () => {
@@ -78,10 +78,10 @@ describe("workspace credential migration", () => {
     // read "" as "cleared" would delete freshly saved keys on every restart.
     const result = migrateWorkspaceCredentials(
       { xai: { key: "" }, tts: { key: "   " } },
-      { xaiApiKey: "xai-OLD", ttsKey: "tts-OLD", boxToken: "box-keep" },
+      { xaiApiKey: "xai-OLD", ttsKey: "tts-OLD", orgoApiKey: "orgo-keep" },
     );
     expect(result.credentialsChanged).toBe(false);
-    expect(result.credentials).toEqual({ xaiApiKey: "xai-OLD", ttsKey: "tts-OLD", boxToken: "box-keep" });
+    expect(result.credentials).toEqual({ xaiApiKey: "xai-OLD", ttsKey: "tts-OLD", orgoApiKey: "orgo-keep" });
     // the swept field itself is still removed from the file
     expect(result.config).toEqual({ xai: {}, tts: {} });
     expect(result.configChanged).toBe(true);
@@ -103,7 +103,7 @@ describe("workspace credential migration", () => {
   });
 
   it("keeps stored secrets when the field is absent (already migrated)", () => {
-    const stored = { xaiApiKey: "xai-keep", boxToken: "box-keep" };
+    const stored = { xaiApiKey: "xai-keep", orgoApiKey: "orgo-keep" };
     const result = migrateWorkspaceCredentials({ profile: { name: "Ada" } }, stored);
     expect(result.configChanged).toBe(false);
     expect(result.credentialsChanged).toBe(false);
@@ -111,7 +111,7 @@ describe("workspace credential migration", () => {
   });
 
   it("leaves non-string junk for the server's schema instead of destroying it", () => {
-    const result = migrateWorkspaceCredentials({ xai: { key: 42 }, box: "not-an-object" }, {});
+    const result = migrateWorkspaceCredentials({ xai: { key: 42 }, orgo: "not-an-object" }, {});
     expect(result.configChanged).toBe(false);
     expect(result.credentialsChanged).toBe(false);
     expect(result.config.xai.key).toBe(42);
@@ -123,7 +123,7 @@ describe("workspace credential env", () => {
     expect(
       workspaceCredentialEnv({
         xaiApiKey: "xai-secret",
-        boxToken: "box-secret",
+        orgoApiKey: "orgo-secret",
         ttsKey: "tts-secret",
         opencodeGoApiKey: "ocg-secret",
         openaiImageApiKey: "image-secret",
@@ -131,7 +131,7 @@ describe("workspace credential env", () => {
       }),
     ).toEqual({
       XAI_API_KEY: "xai-secret",
-      BOX_TOKEN: "box-secret",
+      ORGO_API_KEY: "orgo-secret",
       OMB_TTS_KEY: "tts-secret",
       OPENCODE_API_KEY: "ocg-secret",
       OMB_OPENAI_IMAGE_KEY: "image-secret",

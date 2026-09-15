@@ -13,7 +13,7 @@ const fixture = vi.hoisted(() => {
 vi.mock("@/state/store", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/state/store")>(),
   useStore: () => ({
-    state: { config: { box: { configured: false }, ...fixture.config }, instances: [], computerControl: {}, screens: {}, routines: [], routineRuns: [] },
+    state: { config: { orgo: { configured: false }, ...fixture.config }, instances: [], computerControl: {}, screens: {}, routines: [], routineRuns: [] },
     dispatch: vi.fn(),
     flushBotPatches: vi.fn(),
   }),

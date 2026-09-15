@@ -709,8 +709,7 @@ describe("VPS computer", () => {
     } finally { release(); spawnMock.mockReset(); vi.useRealTimers(); }
   });
 
-  it("fails clearly for BoxAgent and engines without computer MCP", () => {
-    expect(vpsDriverError("boxAgent", true)).toMatch(/cannot use a self-hosted VPS/);
+  it("fails clearly for engines without computer MCP", () => {
     expect(vpsDriverError("codex", false)).toMatch(/cannot mount/);
     expect(vpsDriverError("claudeAgent", true)).toBeNull();
   });
@@ -758,7 +757,7 @@ describe("VPS computer", () => {
     expect(rebuilt.ready).toBe(true);
   });
 
-  it("never removes a container OpenMausBot did not create", async () => {
+  it("never removes a container Open Orgo Bot did not create", async () => {
     const unowned = fixture({ managed: false });
     await expect(vpsComputerAction("remove", CONFIG, BOT_ID, unowned.runner)).rejects.toThrow(/did not create/);
     expect(unowned.calls.some(({ args }) => args[2] === "rm")).toBe(false);

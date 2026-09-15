@@ -3105,12 +3105,12 @@
         }
       }
     },
-    "Runs the agent and its tools inside its Box virtual machine. The VM wakes automatically for each run; keep OpenMausBot running so its scheduler can launch the job.": {
+    "Runs the agent with its assigned Orgo computer. The computer starts automatically for each run; keep Open Orgo Bot running so its scheduler can launch the job.": {
       "localizations": {
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Roda o agente e as ferramentas dele dentro da máquina virtual Box. A VM acorda automaticamente a cada execução; mantenha o OpenMausBot rodando para que o agendador consiga iniciar o trabalho."
+            "value": "Executa o agente com o computador Orgo atribuído. O computador inicia automaticamente em cada execução; mantenha o Open Orgo Bot aberto para que o agendador possa iniciar o trabalho."
           }
         }
       }
@@ -3925,12 +3925,12 @@
         }
       }
     },
-    "This existing Cloud VM choice is preserved, but it cannot run until the paired computer has a configured Box API key and an available Box agent.": {
+    "This existing Cloud VM choice is preserved, but it cannot run until the paired computer has a configured Orgo API key and an available cloud-capable agent.": {
       "localizations": {
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Esta escolha de Cloud VM é mantida, mas não pode rodar enquanto o computador pareado não tiver uma chave de API do Box configurada e um agente Box disponível."
+            "value": "Esta escolha de VM na nuvem é mantida, mas não pode ser executada até que o computador pareado tenha uma chave de API Orgo configurada e um agente compatível com a nuvem disponível."
           }
         }
       }

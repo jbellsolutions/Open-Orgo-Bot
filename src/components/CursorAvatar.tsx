@@ -53,7 +53,7 @@ export type { Ring }
 export interface CursorSilhouette {
   /** Human-readable name, used for the accessible label. */
   name: string
-  /** Transform mapping the artwork into the 228.541-unit face box. '' for none. */
+  /** Transform mapping the artwork into the 228.541-unit face orgo. '' for none. */
   fit: string
   /** SVG markup for the body. The token {{GRADIENT}} is replaced with the instance gradient. */
   body: string

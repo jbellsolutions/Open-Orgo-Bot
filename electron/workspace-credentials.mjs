@@ -9,7 +9,7 @@
 // prefers over the file (server/config.ts loadConfig).
 export const WORKSPACE_CREDENTIALS = [
   { section: "xai", field: "key", name: "xaiApiKey", env: "XAI_API_KEY" },
-  { section: "box", field: "token", name: "boxToken", env: "BOX_TOKEN" },
+  { section: "orgo", field: "apiKey", name: "orgoApiKey", env: "ORGO_API_KEY" },
   { section: "tts", field: "key", name: "ttsKey", env: "OMB_TTS_KEY" },
   { section: "imageGen", field: "key", name: "openaiImageApiKey", env: "OMB_OPENAI_IMAGE_KEY" },
   { section: "imageGen", field: "customApiKey", name: "customImageApiKey", env: "OMB_CUSTOM_IMAGE_KEY" },

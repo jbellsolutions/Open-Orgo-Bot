@@ -343,7 +343,7 @@ public struct Bot: Codable, Hashable, Identifiable, Sendable {
     public var alwaysAllow: [String]?
     public var computer: String?
     /// Which cloud computer backs `computer == "cloud"`. Absent (older
-    /// harnesses included) means the hosted Box; "vps" means the user's own
+    /// harnesses included) means the hosted Orgo computer; "vps" means the user's own
     /// server, which has no interactive desktop to offer a phone.
     public var cloudBackend: String?
     public var speakReplies: Bool?
@@ -669,9 +669,11 @@ public struct ModelCatalog: Codable, Hashable, Sendable {
 /// offer a reasoning control.
 public struct InstanceCapabilities: Codable, Hashable, Sendable {
     public var effortLevels: [String]?
+    public var computerMcp: Bool?
 
-    public init(effortLevels: [String]? = nil) {
+    public init(effortLevels: [String]? = nil, computerMcp: Bool? = nil) {
         self.effortLevels = effortLevels
+        self.computerMcp = computerMcp
     }
 }
 
@@ -715,7 +717,7 @@ public struct Profile: Codable, Hashable, Sendable {
 
 public struct ConfigStatus: Codable, Sendable {
     public var composio: ConfigFlag?
-    public var box: ConfigFlag?
+    public var orgo: ConfigFlag?
     public var tts: ConfigFlag?
     public var imageGen: ConfigFlag?
     public var profile: Profile?
@@ -963,16 +965,16 @@ public enum RoutineRunLocation: String, CaseIterable, Codable, Hashable, Sendabl
 
 /// Desktop-equivalent run-location availability, derived only from paired-safe
 /// status endpoints. Selecting Cloud VM requires both the host credential and
-/// an available Box agent. An existing cloud routine remains editable without
+/// an available cloud-capable agent. An existing cloud routine remains editable without
 /// silently changing where it runs if that VM is temporarily unavailable.
 public struct RoutineRunAvailability: Equatable, Sendable {
     public var cloudConfigured: Bool
     public var cloudInstanceAvailable: Bool
 
     public init(config: ConfigStatus?, instances: [Instance]) {
-        cloudConfigured = config?.box?.configured == true
+        cloudConfigured = config?.orgo?.configured == true
         cloudInstanceAvailable = instances.contains {
-            $0.driverKind == "boxAgent" && $0.snapshot.isAvailable
+            $0.capabilities?.computerMcp == true && $0.snapshot.isAvailable
         }
     }
 

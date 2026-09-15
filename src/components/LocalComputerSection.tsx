@@ -77,7 +77,7 @@ interface LocalVmInventoryPayload {
 }
 
 export interface CloudComputerInventoryInstance {
-  boxId: string;
+  computerId: string;
   name: string;
   state: string;
   ownerBotId: string | null;
@@ -94,7 +94,7 @@ interface CloudComputerInventoryPayload {
 }
 
 type CloudAction = "sleep" | "delete";
-type PendingCloudAction = { boxId: string; action: CloudAction } | null;
+type PendingCloudAction = { computerId: string; action: CloudAction } | null;
 export type CloudPostActionOverride = "deleted" | "sleeping";
 export type CloudPostActionOverrides = Record<string, CloudPostActionOverride>;
 
@@ -184,7 +184,7 @@ export function cloudComputerInventoryState(instance: CloudComputerInventoryInst
   return computerStateLabel(cloudComputerInventoryStateKind(instance));
 }
 
-/** Box's account LIST is eventually consistent. Preserve the result of an
+/** Orgo's account LIST is eventually consistent. Preserve the result of an
  * action the person just completed instead of letting an older provider
  * snapshot make a deleted computer reappear or a sleeping one look awake. */
 export function reconcileCloudInventorySnapshot(
@@ -193,22 +193,22 @@ export function reconcileCloudInventorySnapshot(
   overrides: CloudPostActionOverrides,
 ): { instances: CloudComputerInventoryInstance[]; overrides: CloudPostActionOverrides } {
   const nextOverrides = { ...overrides };
-  const incomingIds = new Set(incoming.map((instance) => instance.boxId));
+  const incomingIds = new Set(incoming.map((instance) => instance.computerId));
   const instances = incoming.flatMap((instance) => {
-    const override = overrides[instance.boxId];
+    const override = overrides[instance.computerId];
     if (override === "deleted") return [];
     if (override !== "sleeping") return [instance];
     if (["archived", "stopped"].includes(instance.state)) {
-      delete nextOverrides[instance.boxId];
+      delete nextOverrides[instance.computerId];
       return [instance];
     }
     return [{ ...instance, state: "archived" }];
   });
 
-  // A transitioning Box can briefly disappear from LIST. Keep the last safe
+  // A transitioning Orgo can briefly disappear from LIST. Keep the last safe
   // row until LIST returns the terminal sleeping state.
   for (const instance of previous) {
-    if (overrides[instance.boxId] !== "sleeping" || incomingIds.has(instance.boxId)) continue;
+    if (overrides[instance.computerId] !== "sleeping" || incomingIds.has(instance.computerId)) continue;
     instances.push({ ...instance, state: "archived" });
   }
   return { instances, overrides: nextOverrides };
@@ -249,7 +249,7 @@ export interface ComputerActionPlan {
 const computerInventoryPaths: Record<ComputerInventoryRequest, string> = {
   status: "/api/local-computer",
   "local-vms": "/api/local-computer/instances",
-  cloud: "/api/computers/boxes",
+  cloud: "/api/computers/orgo",
   vps: "/api/computers/vps",
 };
 
@@ -290,7 +290,7 @@ export function cloudComputerActionPlan(
         })
       : null,
     request: jsonPostRequest(
-      `/api/computers/boxes/${encodeURIComponent(instance.boxId)}/${action}`,
+      `/api/computers/orgo/${encodeURIComponent(instance.computerId)}/${action}`,
       action === "delete" ? { confirmName: instance.name } : {},
     ),
   };
@@ -532,11 +532,11 @@ export function CloudComputersCard({
         ) : instances.map((instance, index) => {
           const kind = cloudComputerInventoryStateKind(instance);
           const state = computerStateLabel(kind);
-          const isPending = pending?.boxId === instance.boxId;
+          const isPending = pending?.computerId === instance.computerId;
           const canSleep = cloudComputerCanSleep(instance);
           return (
             <div
-              key={instance.boxId}
+              key={instance.computerId}
               className={cn(
                 "flex items-start justify-between gap-3 px-3 py-3",
                 index > 0 && "border-t border-hairline/35",
@@ -923,7 +923,7 @@ export function LocalComputerSection() {
     return () => controller.abort();
   }, [inventoryRefreshKey, refreshInventory, status?.mode]);
 
-  // Box account listing is deliberately not polled. It can be expensive and
+  // Orgo account listing is deliberately not polled. It can be expensive and
   // Settings must remain an observation-only surface until the person clicks
   // Sleep or Delete.
   useEffect(() => {
@@ -1062,7 +1062,7 @@ export function LocalComputerSection() {
       (message) => window.confirm(message),
     );
     if (!request) return;
-    setCloudPending({ boxId: instance.boxId, action });
+    setCloudPending({ computerId: instance.computerId, action });
     setCloudError(null);
     setAnnouncement("");
     try {
@@ -1071,7 +1071,7 @@ export function LocalComputerSection() {
       if (!response.ok) throw new Error(body.error ?? t(action === "delete" ? "vm.cloud.deleteError" : "vm.cloud.sleepError"));
       cloudOverridesRef.current = {
         ...cloudOverridesRef.current,
-        [instance.boxId]: action === "delete" ? "deleted" : "sleeping",
+        [instance.computerId]: action === "delete" ? "deleted" : "sleeping",
       };
       const reconciled = reconcileCloudInventorySnapshot(
         cloudInventoryRef.current,

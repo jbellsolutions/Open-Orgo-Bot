@@ -46,14 +46,14 @@ writeFileSync(
     {
       name: "openmausbot",
       version: app.version,
-      description: "Run the OpenMausBot server anywhere and pair your devices to it",
+      description: "Run the Open Orgo Bot server anywhere and pair your devices to it",
       license: "Apache-2.0",
       type: "module",
       bin: { openmausbot: "cli.js" },
       files: ["cli.js", "dist-server", "dist", "skills", "enterprise", "LICENSE", "README.md"],
       engines: { node: ">=24" },
-      repository: { type: "git", url: "https://github.com/milind-soni/OpenMausBot.git" },
-      homepage: "https://github.com/milind-soni/OpenMausBot#readme",
+      repository: { type: "git", url: "https://github.com/jbellsolutions/open-orgo-bot.git" },
+      homepage: "https://github.com/jbellsolutions/open-orgo-bot#readme",
       keywords: ["openmausbot", "agents", "self-hosted", "server"],
     },
     null,
@@ -84,14 +84,14 @@ conversations keep their settings.
 One optional step connects your phone, defaulting to Skip for now. Choose
 an explicitly approved managed public HTTPS endpoint protected by pairing,
 existing Tailscale, or an HTTPS reverse proxy you already configured.
-Managed access uses a separate OpenMausBot account and asks permission for
+Managed access uses a separate Open Orgo Bot account and asks permission for
 the public endpoint and possible connector download. The pairing page and
 basic server identity are public; chat and settings require pairing.
 Tailscale must already be installed and signed in on both devices.
 
 After the HTTPS connection is checked, scan the QR with your phone's
 Camera: use Safari on iPhone/iPad or a web browser on Android. An installed
-OpenMausBot iOS app can also scan or accept the full link. This CLI link
+Open Orgo Bot iOS app can also scan or accept the full link. This CLI link
 does not work with the current Android native pairing scanner. Choose
 Connect on the phone; scanning alone is not a completed pairing. Codes
 are private, single-use, and expire after five minutes. Guided phone
@@ -135,11 +135,11 @@ without starting a server. Completed installs and sign-ins remain; run
 
 For a service, use \`serve --tunnel\` after \`login\` for managed HTTPS,
 \`serve --tailscale\` for your tailnet, or your own reverse proxy. The
-\`login\` command signs in to an OpenMausBot account, not an AI provider;
+\`login\` command signs in to an Open Orgo Bot account, not an AI provider;
 it does not start the tunnel itself.
 
-[Setup guide](https://github.com/milind-soni/OpenMausBot/blob/main/docs/cli-onboarding.md)
-· [Hosting guide](https://github.com/milind-soni/OpenMausBot/blob/main/docs/self-hosting.md)
+[Setup guide](https://github.com/jbellsolutions/open-orgo-bot/blob/main/docs/cli-onboarding.md)
+· [Hosting guide](https://github.com/jbellsolutions/open-orgo-bot/blob/main/docs/self-hosting.md)
 `,
 );
 console.log(`npm package assembled at ${out} (openmausbot@${app.version})`);

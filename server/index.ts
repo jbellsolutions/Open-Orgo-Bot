@@ -1,4 +1,4 @@
-// OpenMausBot server — the harness host. Clients hold no transports
+// Open Orgo Bot server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -77,12 +77,12 @@ import {
 import { fitsOnOneLine, parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
-import * as box from "./box.ts";
+import * as orgo from "./orgo.ts";
 import { TeamComputers, teamComputerAssignment, teamComputerCreate, teamComputerOwner, type TeamComputerRecord } from "./team-computers.ts";
 import type { TeamComputersPayload } from "../shared/team-computer.ts";
-import { boxCreateRecoverySnapshot, retireDeletedBoxCreate } from "./box-create-idempotency.ts";
+import { orgoCreateRecoverySnapshot, retireDeletedOrgoCreate } from "./orgo-create-idempotency.ts";
 import {
-  boxAccountResourceChangeError,
+  orgoAccountResourceChangeError,
   cloudBackendChangeError,
   vpsAliasResourceChangeError,
 } from "./cloud-backend.ts";
@@ -590,7 +590,7 @@ function applyDesktopMutationTokenMessage(raw: unknown): boolean {
 }
 // Browser data of a deleted bot or profile: the engine's saved session
 // state, cleared here on every host (the desktop no longer owns a browser).
-// The coordinator keeps its durable journal and replay; this is its outbox.
+// The coordinator keeps its durable journal and replay; this is its outorgo.
 const browserCleanup: BrowserCleanupCoordinator = new BrowserCleanupCoordinator({
   file: join(DATA_DIR, "browser-cleanups.json"),
   send: (request) => {
@@ -607,7 +607,7 @@ const browserCleanup: BrowserCleanupCoordinator = new BrowserCleanupCoordinator(
     const work = status.kind === "ready" && sessions.length
       ? Promise.all(sessions.map(async (session) => {
           const ok = await clearBrowserSessionState(status.binaryPath, session, { encryptionKey: browserEngineEncryptionKey() });
-          if (!ok) console.warn(`browser cleanup: could not clear saved state for session ${session}; restart OpenMausBot to retry this profile's cleanup. Do not use state clear --all: it erases other profiles too.`);
+          if (!ok) console.warn(`browser cleanup: could not clear saved state for session ${session}; restart Open Orgo Bot to retry this profile's cleanup. Do not use state clear --all: it erases other profiles too.`);
           return ok;
         }))
       : Promise.resolve([true]);
@@ -1554,7 +1554,7 @@ function previewSystemPrompt(bot: BotRecord) {
   // `cfg` is the module-level config (`const cfg = loadConfig()` near the
   // top of index.ts), the same object the turn code reads.
   const persona = [
-    `You are ${bot.name}, a personal bot in OpenMausBot.`,
+    `You are ${bot.name}, a personal bot in Open Orgo Bot.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
   ]
@@ -1568,7 +1568,7 @@ function previewSystemPrompt(bot: BotRecord) {
     previewComputer === "vm"
       ? caps?.computerMcp ? localVmMode(cfg) === "per-bot" ? "vm-private" : "vm-shared" : null
       : previewComputer === "cloud"
-        ? instance?.driverKind === "boxAgent" ? "box-agent" : caps?.computerMcp ? bot.cloudBackend === "vps" ? "vps" : "box" : null
+        ? caps?.computerMcp ? bot.cloudBackend === "vps" ? "vps" : "orgo" : null
         : previewComputer === "local"
           ? caps?.localComputerMcp ? "local" : null
           : null;
@@ -1590,7 +1590,7 @@ function previewSystemPrompt(bot: BotRecord) {
     destination: previewComputer,
     browserOn: caps?.browserMcp === true && builtInBrowserEnabled(cfg) && bot.browser !== false,
   });
-  const privateWorkspace = instance && !["grok", "boxAgent"].includes(instance.driverKind);
+  const privateWorkspace = instance && instance.driverKind !== "grok";
   const built = buildSystemPrompt(persona, bot.soul ?? "", [
     {
       id: "setup",
@@ -3241,9 +3241,7 @@ const watchdog = new TurnWatchdog({
     repeats.settle(turn.threadId);
     const bot = botForThread(turn.botId, turn.threadId);
     const routineRun = activeRoutineRunForThread(turn.threadId);
-    const instance = routineRun?.runOn === "cloud"
-      ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent")
-      : bot ? registry.get(bot.modelSelection.instanceId) : null;
+    const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
     const minutes = Math.round(TURN_STALL_MS / 60_000);
     if (routineRun?.target === "bot") {
@@ -3423,13 +3421,13 @@ let localVmImageBusy = false;
 let localVmProvisionBusy = false;
 let localVmModeChangeBusy = false;
 const activeVpsThreads = new Map<string, string>();
-const boxLifecycleBusyBots = new Set<string>();
+const orgoLifecycleBusyBots = new Set<string>();
 // A refresh is a reader, not a lifecycle change. Keep its reservation until
 // the provider settles even if the HTTP client leaves, and share it on retry.
 const vpsPreviewRequests = new Map<string, ReturnType<typeof vps.vpsComputerScreenshot>>();
-const orphanBoxLifecycleBusyIds = new Set<string>();
-const boxInventoryRequestsBusyIds = new Set<string>();
-type RemoteComputerProvider = "box" | "vps";
+const orphanOrgoLifecycleBusyIds = new Set<string>();
+const orgoInventoryRequestsBusyIds = new Set<string>();
+type RemoteComputerProvider = "orgo" | "vps";
 const computerProviderConfigTransitions = new Set<RemoteComputerProvider>();
 // A restore mutates and cleans a project work tree. Claim the bot across the
 // entire async Git operation so a turn cannot start in that folder midway.
@@ -3446,7 +3444,7 @@ function inheritedTeamComputer(bot: Pick<BotRecord, "section" | "computer" | "cl
 }
 
 function teamComputerPrompt(computer: TeamComputerRecord | undefined): string {
-  return computer ? `Your team shares the Box computer ${JSON.stringify(computer.name)}. Its desktop files and desktop browser logins are shared with other Auto bots in your team; only one turn may drive it at a time. The separate built-in Browser is not this desktop and does not automatically share its logins.` : "";
+  return computer ? `Your team shares the Orgo computer ${JSON.stringify(computer.name)}. Its desktop files and desktop browser logins are shared with other Auto bots in your team; only one turn may drive it at a time. The separate built-in Browser is not this desktop and does not automatically share its logins.` : "";
 }
 
 function botComputerControlKey(bot: BotRecord): string {
@@ -3478,7 +3476,7 @@ function assertTeamControlCanBeTaken(computerId: string): void {
 }
 
 function claimTeamComputerLifecycle(computer: TeamComputerRecord): () => void {
-  if (computerProviderConfigTransitions.has("box")) throw Object.assign(new Error(providerTransitionMessage("box")), { status: 409 });
+  if (computerProviderConfigTransitions.has("orgo")) throw Object.assign(new Error(providerTransitionMessage("orgo")), { status: 409 });
   if (teamComputerInUse(computer)) throw Object.assign(new Error("This team computer is in use; stop the team's work and release computer control first"), { status: 409 });
   return claimBotComputerLifecycle(teamComputerOwner(computer.id));
 }
@@ -3488,14 +3486,14 @@ function assertTeamComputerChangeIdle(before: BotRecord, after: BotRecord): void
   const next = inheritedTeamComputer(after);
   if (previous?.id === next?.id) return;
   if (botHasActiveTurn(before.id) || routines?.activeRunForBot(before.id) || botComputerControlSnapshot(before.id).held ||
-      [previous, next].some(computer => computer && (teamComputerInUse(computer) || boxLifecycleBusyBots.has(teamComputerOwner(computer.id))))) {
+      [previous, next].some(computer => computer && (teamComputerInUse(computer) || orgoLifecycleBusyBots.has(teamComputerOwner(computer.id))))) {
     throw Object.assign(new Error("Stop the affected team's work and release computer control before changing its computer access"), { status: 409 });
   }
 }
 
 async function teamComputersPayload(): Promise<TeamComputersPayload> {
   const entries = teamComputers.list();
-  const inventory = await box.listManagedBoxes(cfg, managedBoxOwners());
+  const inventory = await orgo.listManagedOrgos(cfg, managedOrgoOwners());
   return {
     configured: inventory.configured,
     ...(inventory.problem ? { problem: inventory.problem } : {}),
@@ -3504,46 +3502,46 @@ async function teamComputersPayload(): Promise<TeamComputersPayload> {
       return {
         id: entry.id, name: entry.name, section: entry.section,
         held: computerControl.snapshot(teamComputerOwner(entry.id)).held,
-        state: boxLifecycleBusyBots.has(teamComputerOwner(entry.id)) ? "working" : machine?.state ?? (inventory.available ? "missing" : "unavailable"),
+        state: orgoLifecycleBusyBots.has(teamComputerOwner(entry.id)) ? "working" : machine?.state ?? (inventory.available ? "missing" : "unavailable"),
         ...(entry.problem || inventory.problem ? { problem: entry.problem || inventory.problem! } : {}),
       };
     }),
   };
 }
 
-/** The same named Box identity and whole-turn lease in chats and rooms.
+/** The same named Orgo identity and whole-turn lease in chats and rooms.
  * Assignment authorizes waking, never replacing a missing paid machine. */
-async function attachTeamBox(computer: TeamComputerRecord, botId: string, owner: TurnOwner, canMount: boolean, remoteAgent: boolean) {
-  if (!canMount) throw new Error("This model engine cannot use the team's Box computer; choose an engine with computer tools or an explicit bot destination");
-  if (!box.boxConfigured(cfg)) throw new Error("The team's Box account is not configured; reconnect it in Settings");
+async function attachTeamOrgo(computer: TeamComputerRecord, botId: string, owner: TurnOwner, canMount: boolean, remoteAgent: boolean) {
+  if (!canMount) throw new Error("This model engine cannot use the team's Orgo computer; choose an engine with computer tools or an explicit bot destination");
+  if (!orgo.orgoConfigured(cfg)) throw new Error("The team's Orgo account is not configured; reconnect it in Settings");
   const ownerId = teamComputerOwner(computer.id);
-  if (boxLifecycleBusyBots.has(ownerId)) throw new Error("The team computer is being changed; wait for it to finish");
+  if (orgoLifecycleBusyBots.has(ownerId)) throw new Error("The team computer is being changed; wait for it to finish");
   if (computerControl.snapshot(ownerId).held) throw new Error("Release human control of the team computer before starting another turn");
-  bindTurnComputer(owner, `computer:box-bot:${ownerId}`, true);
+  bindTurnComputer(owner, `computer:orgo-bot:${ownerId}`, true);
   teamComputerTurns.set(owner.threadId, { owner, computerId: computer.id, botId, remoteAgent });
-  let machine = await box.findBox(cfg, ownerId);
-  if (!machine) throw new Error("The team's Box computer is missing; explicitly create or retry it from the Team map");
-  bindTurnComputer(owner, `computer:box:${machine.id}`, true);
-  const action = box.boxTurnLifecycleAction({ explicitCloud: true, canMount: true, state: typeof machine.state === "string" ? machine.state : null });
-  if (action === "wake") machine = await box.readyBox(cfg, ownerId);
-  if (!machine || box.boxTurnLifecycleAction({ explicitCloud: true, canMount: true, state: typeof machine.state === "string" ? machine.state : null }) !== "attach") {
+  let machine = await orgo.findOrgo(cfg, ownerId);
+  if (!machine) throw new Error("The team's Orgo computer is missing; explicitly create or retry it from the Team map");
+  bindTurnComputer(owner, `computer:orgo:${machine.id}`, true);
+  const action = orgo.orgoTurnLifecycleAction({ explicitCloud: true, canMount: true, state: typeof machine.state === "string" ? machine.state : null });
+  if (action === "wake") machine = await orgo.readyOrgo(cfg, ownerId);
+  if (!machine || orgo.orgoTurnLifecycleAction({ explicitCloud: true, canMount: true, state: typeof machine.state === "string" ? machine.state : null }) !== "attach") {
     throw new Error("The team computer is not ready; check it in the Team map");
   }
   if (turnResourceOwners.get(owner.threadId)?.generation !== owner.generation ||
-      !turnResources.owns(`computer:box:${machine.id}`, owner)) throw new Error("This computer turn ended while its machine was starting");
+      !turnResources.owns(`computer:orgo:${machine.id}`, owner)) throw new Error("This computer turn ended while its machine was starting");
   return {
-    integration: { kind: "box" as const, boxId: machine.id, token: cfg.box!.token!, control: controlIntegration(botId, owner.threadId, owner.generation) },
-    capture: () => box.screenshotBox(cfg, ownerId, machine!.id),
+    integration: { kind: "orgo" as const, computerId: machine.id, apiKey: cfg.orgo!.apiKey!, control: controlIntegration(botId, owner.threadId, owner.generation) },
+    capture: () => orgo.screenshotOrgo(cfg, ownerId, machine!.id),
   };
 }
 
-function managedBoxOwners(): box.ManagedBoxOwner[] {
+function managedOrgoOwners(): orgo.ManagedOrgoOwner[] {
   return [...store.bots.map((bot) => ({
     botId: bot.id,
     name: bot.name,
     // A machine is not safe to mutate while any app-level work or human
     // control lease still names its owner. This is deliberately conservative
-    // across destination changes: an old Box may still contain valuable state.
+    // across destination changes: an old Orgo may still contain valuable state.
     inUse:
       bot.busy === true ||
       hasDirectDispatch(bot.id) ||
@@ -3564,8 +3562,8 @@ function botHasActiveTurn(botId: string): boolean {
 }
 
 function providerTransitionMessage(provider: RemoteComputerProvider): string {
-  return provider === "box"
-    ? "Box account settings are being updated — wait for them to finish"
+  return provider === "orgo"
+    ? "Orgo account settings are being updated — wait for them to finish"
     : "VPS connection settings are being updated — wait for them to finish";
 }
 
@@ -3576,18 +3574,18 @@ function providerOperationConflict(provider: RemoteComputerProvider): string | n
   if (provider === "vps" && activeVpsThreads.size > 0) {
     return "stop the active VPS turn before changing the SSH config alias";
   }
-  if (managedBoxOwners().some((owner) => owner.inUse)) {
-    return `stop active bot work and computer control before changing ${provider === "box" ? "the Box account" : "the VPS connection"}`;
+  if (managedOrgoOwners().some((owner) => owner.inUse)) {
+    return `stop active bot work and computer control before changing ${provider === "orgo" ? "the Orgo account" : "the VPS connection"}`;
   }
-  if (boxLifecycleBusyBots.size > 0 || vpsPreviewRequests.size > 0) {
+  if (orgoLifecycleBusyBots.size > 0 || vpsPreviewRequests.size > 0) {
     return "wait for cloud computer actions to finish before changing provider settings";
   }
-  if (provider === "box") {
-    if (boxInventoryRequestsBusyIds.size > 0 || orphanBoxLifecycleBusyIds.size > 0) {
-      return "wait for cloud computer actions to finish before changing the Box account";
+  if (provider === "orgo") {
+    if (orgoInventoryRequestsBusyIds.size > 0 || orphanOrgoLifecycleBusyIds.size > 0) {
+      return "wait for cloud computer actions to finish before changing the Orgo account";
     }
-    if (boxCreateRecoverySnapshot().some((entry) => !entry.resolved)) {
-      return "finish reconciling pending cloud computer creation before changing the Box account";
+    if (orgoCreateRecoverySnapshot().some((entry) => !entry.resolved)) {
+      return "finish reconciling pending cloud computer creation before changing the Orgo account";
     }
   } else if (vps.vpsLifecycleBusy()) {
     return "wait for VPS computer actions to finish before changing the SSH config alias";
@@ -3596,10 +3594,10 @@ function providerOperationConflict(provider: RemoteComputerProvider): string | n
 }
 
 function turnProvider(bot: NonNullable<ReturnType<typeof store.bot>>, runOn?: RoutineRunOn): RemoteComputerProvider | null {
-  if (runOn === "cloud" || registry.get(bot.modelSelection.instanceId)?.driverKind === "boxAgent") return "box";
-  if (inheritedTeamComputer(bot)) return "box";
+  if (runOn === "cloud" || false) return "orgo";
+  if (inheritedTeamComputer(bot)) return "orgo";
   if (bot.computer !== undefined && bot.computer !== "cloud") return null;
-  return bot.cloudBackend === "vps" ? "vps" : "box";
+  return bot.cloudBackend === "vps" ? "vps" : "orgo";
 }
 
 function providerTransitionForTurn(
@@ -3612,29 +3610,29 @@ function providerTransitionForTurn(
     : null;
 }
 
-function claimBoxInventoryRequest(boxId: string): () => void {
-  if (boxInventoryRequestsBusyIds.has(boxId)) {
+function claimOrgoInventoryRequest(computerId: string): () => void {
+  if (orgoInventoryRequestsBusyIds.has(computerId)) {
     throw Object.assign(new Error("this cloud computer is being changed — wait for it to finish"), { status: 409 });
   }
-  boxInventoryRequestsBusyIds.add(boxId);
-  return () => boxInventoryRequestsBusyIds.delete(boxId);
+  orgoInventoryRequestsBusyIds.add(computerId);
+  return () => orgoInventoryRequestsBusyIds.delete(computerId);
 }
 
-/** Claim the owning bot synchronously after Box revalidation and before the
+/** Claim the owning bot synchronously after Orgo revalidation and before the
  * provider mutation. startTurn checks the same set before doing any work, so
  * a new turn and an irreversible lifecycle action cannot pass each other. */
-function claimManagedBoxMutation(instance: box.ManagedBoxInventoryInstance): () => void {
+function claimManagedOrgoMutation(instance: orgo.ManagedOrgoInventoryInstance): () => void {
   const ownerBotId = instance.ownerBotId;
   const teamComputer = teamComputers.list().find(computer => teamComputerOwner(computer.id) === ownerBotId);
   if (teamComputer) return claimTeamComputerLifecycle(teamComputer);
   if (!ownerBotId) {
-    if (orphanBoxLifecycleBusyIds.has(instance.boxId)) {
+    if (orphanOrgoLifecycleBusyIds.has(instance.computerId)) {
       throw Object.assign(new Error("this cloud computer is being changed — wait for it to finish"), { status: 409 });
     }
-    orphanBoxLifecycleBusyIds.add(instance.boxId);
-    return () => orphanBoxLifecycleBusyIds.delete(instance.boxId);
+    orphanOrgoLifecycleBusyIds.add(instance.computerId);
+    return () => orphanOrgoLifecycleBusyIds.delete(instance.computerId);
   }
-  const owner = managedBoxOwners().find((candidate) => candidate.botId === ownerBotId);
+  const owner = managedOrgoOwners().find((candidate) => candidate.botId === ownerBotId);
   if (owner?.inUse) {
     throw Object.assign(new Error("this cloud computer is in use — stop its bot's work first"), { status: 409 });
   }
@@ -3646,20 +3644,20 @@ function claimManagedBoxMutation(instance: box.ManagedBoxInventoryInstance): () 
  * other instead of relying on a stale check made before a provider await.
  * Only opening an existing VPS viewer may coexist with its pending preview. */
 function claimBotComputerLifecycle(botId: string, allowPreview = false): () => void {
-  if (boxLifecycleBusyBots.has(botId)) {
+  if (orgoLifecycleBusyBots.has(botId)) {
     throw Object.assign(new Error("this bot's cloud computer is being changed — wait for it to finish"), { status: 409 });
   }
   if (!allowPreview && vpsPreviewRequests.has(botId)) {
     throw Object.assign(new Error("a screen preview is still refreshing — wait before changing this computer"), { status: 409 });
   }
-  boxLifecycleBusyBots.add(botId);
-  return () => boxLifecycleBusyBots.delete(botId);
+  orgoLifecycleBusyBots.add(botId);
+  return () => orgoLifecycleBusyBots.delete(botId);
 }
 
 function claimManagedVpsMutation(containerName: string): () => void {
   const owner = store.bots.find((candidate) => vps.vpsContainerName(candidate.id) === containerName);
   if (!owner) return () => {};
-  const ownerState = managedBoxOwners().find((candidate) => candidate.botId === owner.id);
+  const ownerState = managedOrgoOwners().find((candidate) => candidate.botId === owner.id);
   if (ownerState?.inUse) {
     throw Object.assign(new Error("this VPS computer is in use — stop its bot's work first"), { status: 409 });
   }
@@ -3884,7 +3882,7 @@ bus.subscribe((event: RuntimeEvent) => {
         }
         // the bot just acted ON ITS SCREEN — refresh the preview now. Only
         // computer tools can change the screen, and each capture competes
-        // with the agent for the box's command endpoint, so a bot grinding
+        // with the agent for the orgo's command endpoint, so a bot grinding
         // through file edits must not trigger one per tool. The refresh is
         // deliberately broad (a computer_exec may well have launched a
         // window); whether the turn has EARNED a settled screenshot is the
@@ -3922,7 +3920,7 @@ bus.subscribe((event: RuntimeEvent) => {
       const permission = event.requestType === "permission" && !event.questions?.length;
       // A permission request here is one the provider left for a person: its
       // own mode already ran (Ask, Edits, Auto's reviewer, Custom's config).
-      // OpenMausBot decides nothing about the action itself. Only Full access
+      // Open Orgo Bot decides nothing about the action itself. Only Full access
       // answers, because that is exactly what the person granted. A QUESTION
       // always reaches the human — even Full access never invents an answer.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
@@ -4864,7 +4862,7 @@ const screenPollers = new Map<
   }
 >();
 
-/** The preview shares the box's single command endpoint with the agent's
+/** The preview shares the orgo's single command endpoint with the agent's
  * own actions, so every frame we take is latency stolen from the work the
  * user is waiting on. Hence: a slow interval, a floor between captures,
  * and never two in flight. */
@@ -4873,7 +4871,7 @@ const SCREEN_MIN_GAP_MS = 3000;
 const SCREEN_SETTLE_TIMEOUT_MS = 10_000;
 
 /** `screenIsTheWork` starts the turn already counting as screen usage: a
- * boxAgent's whole session runs ON the box, so every tool it calls acts on
+ * A cloud-computer session runs through Orgo, so every tool it calls acts on
  * that screen even though none of them is named like a computer tool. Its
  * shell-only turns are kept honest by the settle-time hash gate instead. */
 function startScreenPoller(
@@ -4967,8 +4965,8 @@ function shownScreenHash(threadId: string): string | undefined {
  * in-flight poke first) so the settled screenshot shows the screen's actual
  * end state, not the previous action's. A turn that never touched the
  * screen settles nothing — and skips the capture, which is one less
- * command on the box's single endpoint. A frame the reader can already see
- * settles nothing either: the boxAgent pre-touch counts every turn as
+ * command on the orgo's single endpoint. A frame the reader can already see
+ * settles nothing either: the cloud-computer pre-touch counts every turn as
  * screen work, so without this its shell-only replies would all end in the
  * same idle desktop. Either way the poller is torn down here, so no
  * per-turn state survives the turn. */
@@ -5001,7 +4999,7 @@ async function startTurn(
     excludeMessageIds?: string[];
     /** Routines run in detached tasks; pin the destination for the whole turn. */
     threadId?: string;
-    /** Cloud routines run the whole agent inside the bot's Box VM instead
+    /** Cloud routines run the whole agent inside the bot's Orgo VM instead
      * of merely mounting that VM's computer tools on the MAUS's provider. */
     runOn?: RoutineRunOn;
     /** Lets the system prompt put externally supplied payloads behind an
@@ -5064,7 +5062,7 @@ async function startTurn(
       status: 409,
     });
   }
-  if (boxLifecycleBusyBots.has(botId)) {
+  if (orgoLifecycleBusyBots.has(botId)) {
     throw Object.assign(new Error("this bot's cloud computer is being changed — wait for it to finish"), { status: 409 });
   }
   if (threadBusy(botId, threadId)) throw Object.assign(new Error("this thread is already working — interrupt it first"), { status: 409, code: "thread_busy" });
@@ -5092,14 +5090,12 @@ async function startTurn(
   }
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
-  const instance = opts?.runOn === "cloud"
-    ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
-    : registry.get(bot.modelSelection.instanceId);
+  const instance = registry.get(bot.modelSelection.instanceId);
   if (!instance) {
     throw Object.assign(
       new Error(
         opts?.runOn === "cloud"
-          ? "the Cloud VM runner is unavailable — configure Box in App Settings"
+          ? "the Cloud VM runner is unavailable — configure Orgo in App Settings"
           : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
       ),
       { status: 409 },
@@ -5246,7 +5242,7 @@ async function startTurn(
   const recoveryText = resumeCursor !== undefined ? buildRecoveryText({ text: turnText, transcript }) : undefined;
 
   const persona = [
-    `You are ${bot.name}, a personal bot in OpenMausBot.`,
+    `You are ${bot.name}, a personal bot in Open Orgo Bot.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
   ]
@@ -5261,7 +5257,7 @@ async function startTurn(
   }
 
   // busy flips immediately so the composer locks; the dispatch itself runs
-  // in the background — box provisioning can take ~90s and must never
+  // in the background — orgo provisioning can take ~90s and must never
   // hang the HTTP request
   const dispatchClaimId = randomUUID();
   const resourceOwner = { threadId, generation: dispatchClaimId };
@@ -5320,8 +5316,8 @@ async function startTurn(
       // CLI engines work inside the bot's own workspace directory rather
       // than the user's home: a bot with file tools and acceptEdits gets a
       // desk, not the whole house — and the workspace is where its
-      // MEMORY.md lives. API/box engines have no local filesystem story.
-      const worksInWorkspace = instance.driverKind !== "grok" && instance.driverKind !== "boxAgent";
+      // MEMORY.md lives. API/orgo engines have no local filesystem story.
+      const worksInWorkspace = instance.driverKind !== "grok";
       if (worksInWorkspace) {
         ensureWorkspace(bot.id);
         // baseline for the journal's turn-boundary diff (see the bus hook)
@@ -5336,7 +5332,7 @@ async function startTurn(
       // the private bot workspace. A legacy task with an existing provider
       // session deliberately pins to null (the old home-folder behavior),
       // because moving a live session would break resume.
-      // A cloud run happens on the box, where a host folder means nothing:
+      // A cloud run happens on the orgo, where a host folder means nothing:
       // pin the task to the default so the header chip never shows the
       // bot's folder for a task that runs elsewhere.
       if (opts?.runOn === "cloud") store.pinTaskCwd(bot.id, threadId, undefined, { none: true });
@@ -5349,7 +5345,7 @@ async function startTurn(
         throw Object.assign(new Error("another thread is working in this project folder — wait for it to finish or choose a separate folder"), { status: 409, code: "workspace_busy" });
       }
       // Checkpoint explicit project folders, where a bot can overwrite the
-      // user's work. Its private OpenMaus workspace is app-owned and changes
+      // user's work. Its private Open Orgo Bot workspace is app-owned and changes
       // on nearly every ordinary chat; snapshotting it would add hidden disk
       // and process overhead without a user project to restore.
       const checkpointCwd = cwd && cwd !== privateWorkspace ? cwd : undefined;
@@ -5357,12 +5353,12 @@ async function startTurn(
       // tools that would fail on every call or spawn an unnecessary proxy.
       const dwebUrl = process.env.DWEB_URL?.trim();
       if (dwebUrl) integrations.dweb = { url: dwebUrl };
-      // Cloud routines always use Box/BoxAgent. The per-bot backend applies
+      // Cloud routines use Orgo. The per-bot backend applies
       // only to ordinary turns that mount a computer into the local agent.
       const teamComputer = inheritedTeamComputer(bot);
-      const cloudBackend = teamComputer || opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
+      const cloudBackend = teamComputer || opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "orgo" : "vps";
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
-      const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
+      const mountsCloudComputer = mountsComputerMcp;
       const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
       // Where this turn's hands may land. The bot's "Works on" choice is
       // strict; a browser-only bot gets no computer at all, and a bot whose
@@ -5377,19 +5373,16 @@ async function startTurn(
         destination: teamComputer || opts?.runOn === "cloud" ? "cloud" : bot.computer, // cloud routine overrides the MAUS default
         browserOn,
       });
-      if (bot.computer === "browser" && plan.computer === "off" && instance.driverKind === "boxAgent") {
-        throw new Error("the Computer engine works on the cloud computer — set Works on to Cloud, or choose another engine");
-      }
       const wants = plan.computer;
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let browserCapture: (() => Promise<{ png: string; format: string }>) | null = null;
-      let computerKind: "box" | "vps" | "vm" | "local" | null = null;
+      let computerKind: "orgo" | "vps" | "vm" | "local" | null = null;
       let autoVpsProblem: string | null = null;
 
       // Explicit destinations are strict. In particular, Local VM must never
       // fall through to host CUA and accidentally click on the user's Mac.
       if (wants === "vm") {
-        if (!mountsComputerMcp || instance.driverKind === "boxAgent") {
+        if (!mountsComputerMcp) {
           throw new Error("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination");
         }
         const localVmTarget = localVmTargetForBot(bot.id);
@@ -5416,7 +5409,7 @@ async function startTurn(
           localVmTarget,
         );
         computerKind = "vm";
-        // Same contract as the Box and VPS branches below: without this the
+        // Same contract as the Orgo and VPS branches below: without this the
         // poller never starts, so the Local VM publishes no `screen` events
         // and every client that only has the stream (the phone) waits
         // forever. The web panel hid the gap by polling the screenshot
@@ -5442,7 +5435,7 @@ async function startTurn(
           throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
         }
         const cua = readCuaConnection();
-        if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot");
+        if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart Open Orgo Bot");
         bindTurnComputer(resourceOwner, "computer:host");
         integrations.localComputer = gatedLocalComputer(cua, controlIntegration(bot.id, threadId, dispatchClaimId));
         computerKind = "local";
@@ -5484,67 +5477,67 @@ async function startTurn(
       }
 
       // Cloud is also strict when explicitly selected. Auto (unset) reuses an
-      // existing cloud box, then falls back to host CUA without provisioning.
+      // existing cloud orgo, then falls back to host CUA without provisioning.
       if (teamComputer) {
-        const attached = await attachTeamBox(teamComputer, bot.id, resourceOwner, mountsCloudComputer, instance.driverKind === "boxAgent");
+        const attached = await attachTeamOrgo(teamComputer, bot.id, resourceOwner, mountsCloudComputer, false);
         integrations.computer = attached.integration;
         previewCapture = attached.capture;
-        computerKind = "box";
+        computerKind = "orgo";
       }
-      if (!teamComputer && (wants === "cloud" || wants === undefined) && cloudBackend === "box" && box.boxConfigured(cfg)) {
-        // Explicit cloud turns can provision/wake the same bot's Box. Claim
+      if (!teamComputer && (wants === "cloud" || wants === undefined) && cloudBackend === "orgo" && orgo.orgoConfigured(cfg)) {
+        // Explicit cloud turns can provision/wake the same bot's Orgo. Claim
         // before any network await so setup itself cannot race another turn.
-        if (wants === "cloud") bindTurnComputer(resourceOwner, `computer:box-bot:${bot.id}`, true);
+        if (wants === "cloud") bindTurnComputer(resourceOwner, `computer:orgo-bot:${bot.id}`, true);
         if (!mountsCloudComputer && wants === "cloud") {
           throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
         }
-        let b = await box.findBox(cfg, bot.id).catch(() => null);
-        let lifecycle = box.boxTurnLifecycleAction({
+        let b = await orgo.findOrgo(cfg, bot.id).catch(() => null);
+        let lifecycle = orgo.orgoTurnLifecycleAction({
           explicitCloud: wants === "cloud",
           canMount: mountsCloudComputer,
           state: typeof b?.state === "string" ? b.state : null,
         });
         if (lifecycle === "provision") {
           broadcast({ kind: "computer", botId: bot.id, state: "provisioning" });
-          await box.provisionBox(cfg, bot.id, bot.name);
-          b = await box.findBox(cfg, bot.id).catch(() => null);
-          lifecycle = box.boxTurnLifecycleAction({
+          await orgo.provisionOrgo(cfg, bot.id, bot.name);
+          b = await orgo.findOrgo(cfg, bot.id).catch(() => null);
+          lifecycle = orgo.orgoTurnLifecycleAction({
             explicitCloud: true,
             canMount: mountsCloudComputer,
             state: typeof b?.state === "string" ? b.state : null,
           });
         }
-        // an archived box answers every action with an error until it
+        // an archived orgo answers every action with an error until it
         // resumes — wake it here, once, instead of letting the agent
         // discover it one failed tool call at a time. Explicit Cloud is the
         // consent boundary for the resume (~8s, and it un-pauses billing).
         if (lifecycle === "wake") {
           broadcast({ kind: "computer", botId: bot.id, state: "waking" });
-          b = (await box.readyBox(cfg, bot.id).catch(() => null)) ?? b;
-          lifecycle = box.boxTurnLifecycleAction({
+          b = (await orgo.readyOrgo(cfg, bot.id).catch(() => null)) ?? b;
+          lifecycle = orgo.orgoTurnLifecycleAction({
             explicitCloud: true,
             canMount: mountsCloudComputer,
             state: typeof b?.state === "string" ? b.state : null,
           });
         }
         if (b && lifecycle === "attach") {
-          bindTurnComputer(resourceOwner, `computer:box:${b.id}`, instance.driverKind === "boxAgent");
-          previewCapture = () => box.screenshotBox(cfg, bot.id, b!.id);
+          bindTurnComputer(resourceOwner, `computer:orgo:${b.id}`, false);
+          previewCapture = () => orgo.screenshotOrgo(cfg, bot.id, b!.id);
           if (mountsCloudComputer) {
             integrations.computer = {
-              kind: "box",
-              boxId: b.id,
-              token: cfg.box!.token!,
+              kind: "orgo",
+              computerId: b.id,
+              apiKey: cfg.orgo!.apiKey!,
               control: controlIntegration(bot.id, threadId, dispatchClaimId),
             };
-            computerKind = "box";
+            computerKind = "orgo";
           }
         }
       }
-      if (wants === "cloud" && cloudBackend === "box" && !box.boxConfigured(cfg)) {
-        throw new Error("Cloud box is not configured — add a Box API key or choose Local VM");
+      if (wants === "cloud" && cloudBackend === "orgo" && !orgo.orgoConfigured(cfg)) {
+        throw new Error("Cloud orgo is not configured — add a Orgo API key or choose Local VM");
       }
-      if (wants === "cloud" && cloudBackend === "box" && !integrations.computer) {
+      if (wants === "cloud" && cloudBackend === "orgo" && !integrations.computer) {
         throw new Error("the cloud computer could not be created or reached");
       }
 
@@ -5688,8 +5681,8 @@ async function startTurn(
       const computerPromptKind: ComputerPromptKind | null =
         computerKind === "vm"
           ? localVmMode(cfg) === "per-bot" ? "vm-private" : "vm-shared"
-          : computerKind === "box"
-            ? instance.driverKind === "boxAgent" ? "box-agent" : "box"
+          : computerKind === "orgo"
+            ? "orgo"
             : computerKind === "vps"
               ? "vps"
               : computerKind === "local"
@@ -5777,14 +5770,14 @@ async function startTurn(
       }
       // a turn can settle before dispatch returns, and a poller started
       // after its own turn.completed would never be torn down — it would
-      // keep polling the box forever, carrying dead per-turn state. busy
+      // keep polling the orgo forever, carrying dead per-turn state. busy
       // is flipped false in the fold, so it is the honest "still running".
       if ((previewCapture || browserCapture) && threadBusy(bot.id, threadId)) {
         startScreenPoller(
           bot.id,
           threadId,
           { ...(previewCapture ? { computer: previewCapture } : {}), ...(browserCapture ? { browser: browserCapture } : {}) },
-          { screenIsTheWork: instance.driverKind === "boxAgent" },
+          { screenIsTheWork: false },
         );
       }
       // An adapter may publish completion synchronously just before its
@@ -6127,17 +6120,13 @@ routines = new RoutineManager({
       goalRunId: runId,
     });
   },
-  interruptTurn: async (botId, threadId, runOn) => {
+  interruptTurn: async (botId, threadId, _runOn) => {
     const bot = botForThread(botId, threadId);
     pendingDelegationWakes.delete(threadId);
     discardDelegations(commsBus, threadId);
     cancelDirectTurnDispatch(botId, threadId);
     revokeInternalCapabilitiesForThread(threadId);
-    const instance = runOn === "cloud"
-      ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
-      : bot
-        ? registry.get(bot.modelSelection.instanceId)
-        : null;
+    const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     try {
       await instance?.adapter.interruptTurn(threadId);
     } finally {
@@ -6178,10 +6167,10 @@ store.reconcileInterruptedGroupGoals((runId, threadId) => {
   );
   const detail = run.output ?? run.error ?? (
     status === "completed"
-      ? "The scheduled team goal completed before OpenMausBot restarted."
+      ? "The scheduled team goal completed before Open Orgo Bot restarted."
       : status === "stopped"
         ? "The scheduled team goal was stopped."
-        : "OpenMausBot restarted before this scheduled team goal finished."
+        : "Open Orgo Bot restarted before this scheduled team goal finished."
   );
   return { status, detail, finishedAt: run.finishedAt ?? groupGoalRecoveryAt };
 });
@@ -6211,15 +6200,17 @@ if (recoveryOwners.length > 0) {
 // after the user confirms a durable card. Keeping this beside the scheduler
 // makes the card resolvable after an app restart without involving the model.
 async function cloudRoutineReadiness(): Promise<{ ready: boolean; reason?: string }> {
-  if (!box.boxConfigured(cfg)) {
+  if (!orgo.orgoConfigured(cfg)) {
     return {
       ready: false,
-      reason: "Cloud VM needs a working Box API key in App Settings before this routine can run.",
+      reason: "Cloud VM needs a working Orgo API key in App Settings before this routine can run.",
     };
   }
-  const instance = registry.instances().find((candidate) => candidate.driverKind === "boxAgent");
+  const instance = registry.instances().find((candidate) =>
+    candidate.driverKind === "hermesAgent" && candidate.adapter.capabilities.computerMcp === true,
+  ) ?? registry.instances().find((candidate) => candidate.adapter.capabilities.computerMcp === true);
   if (!instance) {
-    return { ready: false, reason: "The Cloud VM runner is unavailable. Restart OpenMausBot and try again." };
+    return { ready: false, reason: "No computer-capable model engine is available. Connect Hermes or another supported engine." };
   }
   try {
     const snapshot = await instance.snapshot();
@@ -6259,7 +6250,7 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
       if (computerProviderConfigTransitions.size > 0) {
         return deletionResponse( 409, { error: "computer provider settings are being updated — wait before deleting this bot" });
       }
-      if (boxLifecycleBusyBots.has(bot.id)) {
+      if (orgoLifecycleBusyBots.has(bot.id)) {
         return deletionResponse( 409, { error: "wait for this bot's cloud computer action to finish before deleting the bot" });
       }
       const activeRoutine = routines!.activeRunForBot(bot.id);
@@ -6274,16 +6265,16 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
           error: `stop this bot's work in channel ${activeGroup.group.name} before deleting the bot`,
         });
       }
-      // A direct turn that has already claimed the bot can provision a Box in
-      // its background setup. Do not let deletion race that work while a Box
+      // A direct turn that has already claimed the bot can provision a Orgo in
+      // its background setup. Do not let deletion race that work while a Orgo
       // account is configured; the person can stop the turn and retry.
-      if ((box.boxConfigured(cfg) || vpsSshAlias(cfg)) && (bot.busy || hasDirectDispatch(bot.id))) {
+      if ((orgo.orgoConfigured(cfg) || vpsSshAlias(cfg)) && (bot.busy || hasDirectDispatch(bot.id))) {
         return deletionResponse( 409, { error: "stop this bot's work before checking and deleting its cloud computer" });
       }
-      const botBoxRecovery = boxCreateRecoverySnapshot().filter((entry) => entry.botId === bot.id);
-      if (botBoxRecovery.some((entry) => !entry.resolved)) {
+      const botOrgoRecovery = orgoCreateRecoverySnapshot().filter((entry) => entry.botId === bot.id);
+      if (botOrgoRecovery.some((entry) => !entry.resolved)) {
         return deletionResponse( 409, {
-          error: "finish reconciling this bot's pending cloud computer creation before deleting it — check ascii.dev, then retry Box setup",
+          error: "finish reconciling this bot's pending cloud computer creation before deleting it — check Orgo, then retry setup",
         });
       }
       // Bot deletion awaits VM/browser/provider cleanup. Claim the bot and
@@ -6316,7 +6307,7 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
         // VPS containers are also durable and may outlive a destination or
         // backend switch. Keep the bot as the discoverable owner until the
         // person explicitly removes that container from Settings.
-        const vpsInventory = await vps.listManagedVpsComputers(cfg, managedBoxOwners());
+        const vpsInventory = await vps.listManagedVpsComputers(cfg, managedOrgoOwners());
         if (vpsInventory.configured && !vpsInventory.available) {
           return deletionResponse( 503, {
             error: `${vpsInventory.problem ?? "VPS computer inventory is unavailable"}. Refresh Settings → Computers before deleting this bot`,
@@ -6327,21 +6318,21 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
             error: "remove this bot's VPS computer from Settings → Computers before deleting the bot",
           });
         }
-        // LIST is eventually consistent, and a remembered Box may also have
-        // been renamed outside OpenMausBot. The create journal is stronger
+        // LIST is eventually consistent, and a remembered Orgo may also have
+        // been renamed outside Open Orgo Bot. The create journal is stronger
         // ownership evidence: inspect every durable id directly before the bot
         // record that makes it discoverable can be removed. Missing credentials
         // or an unavailable provider must fail closed.
-        for (const recovery of botBoxRecovery) {
-          if (!recovery.boxId) {
+        for (const recovery of botOrgoRecovery) {
+          if (!recovery.computerId) {
             return deletionResponse( 409, {
               error: "finish reconciling this bot's pending cloud computer creation before deleting it",
             });
           }
-          const inspected = await box.inspectBoxIdentity(cfg, recovery.boxId);
+          const inspected = await orgo.inspectOrgoIdentity(cfg, recovery.computerId);
           if (!inspected.available) {
             return deletionResponse( 503, {
-              error: `${inspected.problem ?? "a remembered cloud computer could not be verified"}. Restore its Box account before deleting this bot`,
+              error: `${inspected.problem ?? "a remembered cloud computer could not be verified"}. Restore its Orgo account before deleting this bot`,
             });
           }
           if (inspected.identity) {
@@ -6352,12 +6343,12 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
           // A direct 404/410 is authoritative even while account LIST catches
           // up. Retire only this exact provider identity, then continue looking
           // for any older name-based resource the journal never recorded.
-          retireDeletedBoxCreate(recovery.boxId);
+          retireDeletedOrgoCreate(recovery.computerId);
         }
-        // A Box survives destination/backend changes and contains browser
+        // A Orgo survives destination/backend changes and contains browser
         // sessions and files. Resolve ownership from a fresh provider listing;
         // deleting the bot first would make that durable machine look orphaned.
-        const cloudInventory = await box.listManagedBoxes(cfg, managedBoxOwners());
+        const cloudInventory = await orgo.listManagedOrgos(cfg, managedOrgoOwners());
         if (cloudInventory.configured && !cloudInventory.available) {
           return deletionResponse( 503, {
             error: `${cloudInventory.problem ?? "cloud computer inventory is unavailable"}. Refresh Settings → Computers before deleting this bot`,
@@ -6513,7 +6504,7 @@ function dispatchTeamSetupResume(entry: TeamSetupResumeEntry): void {
     pendingTeamSetupResumes.set(request.requestId, entry);
     return;
   }
-  const prompt = `OpenMausBot team setup decision ${request.requestId}: ${JSON.stringify(request.result)}. Report this exact result and continue the user's already requested work. Do not ask for confirmation again or repeat this setup/deletion. A denied or cancelled operation did not authorize any substitute action. Existing thread models were not changed.`;
+  const prompt = `Open Orgo Bot team setup decision ${request.requestId}: ${JSON.stringify(request.result)}. Report this exact result and continue the user's already requested work. Do not ask for confirmation again or repeat this setup/deletion. A denied or cancelled operation did not authorize any substitute action. Existing thread models were not changed.`;
   const failed = (error: string) => {
     if (cancelled()) return;
     const current = store.messagesFor(request.threadId).find((item) => item.id === messageId);
@@ -7097,7 +7088,7 @@ async function runGroupMemberTurn(
     onDispatchError?.(message);
     return true;
   }
-  if (boxLifecycleBusyBots.has(readyBot.id)) {
+  if (orgoLifecycleBusyBots.has(readyBot.id)) {
     if (orchestration) {
       orchestration.result.outcome = "busy";
       return true;
@@ -7170,18 +7161,18 @@ async function runGroupMemberTurn(
   }
 
   if (roomTeamComputer) {
-    const attached = await attachTeamBox(roomTeamComputer, readyBot.id, resourceOwner,
-      instance.adapter.capabilities.computerMcp === true || instance.driverKind === "boxAgent", instance.driverKind === "boxAgent");
+    const attached = await attachTeamOrgo(roomTeamComputer, readyBot.id, resourceOwner,
+      instance.adapter.capabilities.computerMcp === true, false);
     if (isCancelled?.() || groupSpeakers.get(threadId) !== roomSpeaker ||
         activeInternalGenerationByThread.get(threadId) !== internalGeneration) return false;
     integrations.computer = attached.integration;
-    startScreenPoller(readyBot.id, threadId, { computer: attached.capture }, { screenIsTheWork: instance.driverKind === "boxAgent" });
+    startScreenPoller(readyBot.id, threadId, { computer: attached.capture }, { screenIsTheWork: false });
   }
 
   // Room and Goal turns use the speaker's desktop, never the coordinator's.
   // Claim the same lease as direct turns before asynchronous VM setup.
   if (readyBot.computer === "vm") {
-    if (instance.adapter.capabilities.computerMcp !== true || instance.driverKind === "boxAgent") {
+    if (instance.adapter.capabilities.computerMcp !== true) {
       throw new Error("this model engine cannot use the Local VM");
     }
     // A distinct identity fences cleanup even in shared mode on the same room thread.
@@ -7233,7 +7224,7 @@ async function runGroupMemberTurn(
     ? reachablePeers(store.bots, bot).filter((peer) => !readyGroup.memberIds.includes(peer.id))
     : [];
   const system = [
-    `You are ${bot.name}, a bot in the room "${readyGroup.name}" in OpenMausBot.`,
+    `You are ${bot.name}, a bot in the room "${readyGroup.name}" in Open Orgo Bot.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
     `Room members: ${roster}, and ${userName} (the human).`,
@@ -7241,7 +7232,7 @@ async function runGroupMemberTurn(
     `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
     outsideRoom.length > 0 && orchestration && !orchestration.roomHandoffId && roomPeerRosterSystemPrompt(outsideRoom),
     integrations.agents && (CREDENTIAL_PROMPT + (orchestration && !orchestration.roomHandoffId ? THREADS_PROMPT : "")).trim(),
-    integrations.agents && (!orchestration || orchestration.roomHandoffId) && "For actual OpenMausBot teamwork, discover IDs with list_room_targets and use coordinate_bots for advice or work in this or another room. Do not substitute native coding helpers for these named bots. Consult only when needed to make a decision; no discussion step is mandatory. Give concrete responsibilities, exact accessible paths and acceptance checks. End your turn after assigning; busy teammates queue and results automatically resume you. When they return, finish the requested verification and give the user one final answer. Native helper names are not evidence that an OpenMausBot teammate participated. Plain @mentions are only for conversational replies in this room.",
+    integrations.agents && (!orchestration || orchestration.roomHandoffId) && "For actual Open Orgo Bot teamwork, discover IDs with list_room_targets and use coordinate_bots for advice or work in this or another room. Do not substitute native coding helpers for these named bots. Consult only when needed to make a decision; no discussion step is mandatory. Give concrete responsibilities, exact accessible paths and acceptance checks. End your turn after assigning; busy teammates queue and results automatically resume you. When they return, finish the requested verification and give the user one final answer. Native helper names are not evidence that an Open Orgo Bot teammate participated. Plain @mentions are only for conversational replies in this room.",
     integrations.agents && ROUTINE_PROMPT.trim(),
     integrations.agents && PROFILE_PROMPT.trim(),
     skillAuthoring && LEARN_PROMPT.trim(),
@@ -7258,7 +7249,7 @@ async function runGroupMemberTurn(
 
   // same workspace + memory as a 1:1 turn — the room is a different
   // conversation, not a different bot
-  const worksInWorkspace = instance.driverKind !== "grok" && instance.driverKind !== "boxAgent";
+  const worksInWorkspace = instance.driverKind !== "grok";
   const workspace = worksInWorkspace ? ensureWorkspace(bot.id) : undefined;
   // a room member's memory writes are journaled the same as a 1:1 turn's
   if (workspace) beginMemoryTurn(bot.id, threadId);
@@ -7276,7 +7267,7 @@ async function runGroupMemberTurn(
   const roomSystem = buildSystemPrompt(system, store.bot(bot.id)?.soul ?? bot.soul ?? "", [
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd) : "" },
     { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
-    { id: "computer", label: "Computer", text: computerPrompt(roomTeamComputer ? instance.driverKind === "boxAgent" ? "box-agent" : "box" : roomVmTarget ? localVmMode(cfg) === "per-bot" ? "vm-private" : "vm-shared" : null) },
+    { id: "computer", label: "Computer", text: computerPrompt(roomTeamComputer ? "orgo" : roomVmTarget ? localVmMode(cfg) === "per-bot" ? "vm-private" : "vm-shared" : null) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer) },
     { id: "plan", label: "Surface", text: roomPlan.note },
     { id: "browser", label: "Browser", text: integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "" },
@@ -8672,7 +8663,7 @@ function dispatchConnectorResume(entry: { botId: string; threadId: string; resum
   const owner = connectorThread(entry.botId, entry.threadId);
   if (!owner) return;
   const names = entry.labels.join(", ");
-  const prompt = `OpenMausBot connection update: the user securely connected ${names}. Continue the task that paused for this connection. Do not ask them to connect it again.`;
+  const prompt = `Open Orgo Bot connection update: the user securely connected ${names}. Continue the task that paused for this connection. Do not ask them to connect it again.`;
   if (owner.group ? owner.bot.busy : threadBusy(entry.botId, entry.threadId) || activeGroupTurnForBot(entry.botId)) {
     pendingConnectorResumes.set(`${entry.threadId}:${entry.resumeKey}`, entry);
     return;
@@ -8779,7 +8770,7 @@ function phoneSecretSubmissionKey(threadId: string, messageId: string, requestKe
 }
 
 function credentialDesktopHandoff(label: string): string {
-  return `Securely provide the ${label} from OpenMausBot on your phone or computer. It is never added to chat.`;
+  return `Securely provide the ${label} from Open Orgo Bot on your phone or computer. It is never added to chat.`;
 }
 
 function secretMessage(botId: string, threadId: string, messageId: string): Message | null {
@@ -8816,8 +8807,8 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
   if (!owner) return;
   const prompt =
     entry.outcome === "provided"
-      ? `OpenMausBot credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
-      : `OpenMausBot credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
+      ? `Open Orgo Bot credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
+      : `Open Orgo Bot credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
   if (owner.group ? owner.bot.busy : threadBusy(entry.botId, entry.threadId) || activeGroupTurnForBot(entry.botId)) {
     pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
     return;
@@ -9058,7 +9049,7 @@ function cliProbeEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
   for (const key of [
     "XAI_API_KEY",
-    "BOX_TOKEN",
+    "ORGO_API_KEY",
     "OPENCODE_API_KEY",
     "COMPOSIO_API_KEY",
     "OMB_COMPOSIO_BROKER_TOKEN",
@@ -9098,7 +9089,7 @@ async function localVmPayload(target: LocalVmTarget) {
  * app itself deleted eight hours earlier. Someone who steps away overnight
  * comes back to an error on their first message.
  *
- * The cloud branch below already does the opposite: an absent box is
+ * The cloud branch below already does the opposite: an absent orgo is
  * provisioned on first use behind a `provisioning` broadcast. This gives the
  * Local VM the same lifecycle for the same reason.
  *
@@ -9186,7 +9177,7 @@ function configStatus() {
       configured: composio.configured(cfg),
       mode: composio.connectionMode(cfg),
     },
-    box: { configured: Boolean(cfg.box?.token) },
+    orgo: { configured: Boolean(cfg.orgo?.apiKey), workspaceId: cfg.orgo?.workspaceId ?? "" },
     vps: { configured: Boolean(vpsSshAlias(cfg)), sshAlias: vpsSshAlias(cfg) ?? "" },
     opencodeGo: { configured: Boolean(cfg.opencodeGo?.apiKey) },
     // the chosen voice is a setting, not a secret; the key is reported the
@@ -9494,7 +9485,7 @@ const workspaceBackupRoutes = createWorkspaceBackupRoutes({
     idle: () => !providerFleetReloading && !providerAuthSessions.active && !browserEngineInstall &&
       !routines?.isTicking && !calendarCalls?.isTicking &&
       !localVmImageBusy && !localVmProvisionBusy && !localVmModeChangeBusy &&
-      !localVmLifecycleBusy.size && !boxLifecycleBusyBots.size && !vpsPreviewRequests.size && !orphanBoxLifecycleBusyIds.size &&
+      !localVmLifecycleBusy.size && !orgoLifecycleBusyBots.size && !vpsPreviewRequests.size && !orphanOrgoLifecycleBusyIds.size &&
       !computerProviderConfigTransitions.size && !checkpointRestoreLeases.size &&
       teamComputers.list().every(computer => !teamComputerInUse(computer)) &&
       store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
@@ -9735,7 +9726,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       res.setHeader("cache-control", "no-store");
       if (method === "GET") return json(res, 200, customDomainStatus());
       if (method === "POST" || method === "DELETE") {
-        if (DESKTOP_MANAGED) return json(res, 409, { error: "Custom domains are configured on a self-hosted OpenMausBot server, not the desktop companion." });
+        if (DESKTOP_MANAGED) return json(res, 409, { error: "Custom domains are configured on a self-hosted Open Orgo Bot server, not the desktop companion." });
         if (!/^application\/json\b/i.test(String(req.headers["content-type"] ?? ""))) {
           return json(res, 415, { error: "content-type must be application/json" });
         }
@@ -10853,7 +10844,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // The budget is read BEFORE any approval card and CHARGED only on
         // the path that actually appends. Reading it early is what stops a
         // bot in a loop turning that loop into a queue of cards for a person
-        // to work through: the refusal lands on the bot, not in the inbox.
+        // to work through: the refusal lands on the bot, not in the inorgo.
         // Charging it early would have been a lie in the other direction —
         // a denied card, a room deleted while the card was open, or a
         // roster change that ends the post all leave the room with nothing
@@ -11504,7 +11495,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // ── independent webhook triggers ────────────────────────────────────
     // Management stays on the app-only server. Actual deliveries land on a
     // second, webhook-only loopback listener so Funnel or a future hosted
-    // relay never has to expose the rest of OpenMausBot's control surface.
+    // relay never has to expose the rest of Open Orgo Bot's control surface.
     if (path === "/api/webhooks" && method === "GET") {
       return json(res, 200, { webhooks: webhooks.list(), attempts: webhooks.listAttempts(), ingress: webhookIngressStatus() });
     }
@@ -11753,7 +11744,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // a bot must render a Markdown link to it, while a user message must carry
     // the exact standalone attachment tag written by the composer. The bot
     // branch derives conversation/workspace roots; the user branch is limited
-    // to OpenMausBot's private attachment directory. This is deliberately not
+    // to Open Orgo Bot's private attachment directory. This is deliberately not
     // a general path reader.
     m = path.match(/^\/api\/threads\/([\w-]+)\/messages\/([\w-]+)\/file$/);
     const streamsMessageImage = Boolean(
@@ -12080,7 +12071,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           ? body.name.trim()
           : profileName
             ? `${profileName}'s Team`
-            : "My OpenMaus Team";
+            : "My Open Orgo Bot Team";
       const memberIds = store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id);
       if ((body.format === "backup" ? store.bots.length : memberIds.length) === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
@@ -13131,8 +13122,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           patch.browserProfile = requestedProfile;
         } else return json(res, 400, { error: "browserProfile must name an existing browser profile" });
       }
-      if (body.cloudBackend !== undefined && !["box", "vps"].includes(String(body.cloudBackend))) {
-        return json(res, 400, { error: "cloudBackend must be box or vps" });
+      if (body.cloudBackend !== undefined && !["orgo", "vps"].includes(String(body.cloudBackend))) {
+        return json(res, 400, { error: "cloudBackend must be orgo or vps" });
       }
       if (body.autoStartVps !== undefined) {
         if (typeof body.autoStartVps !== "boolean") return json(res, 400, { error: "autoStartVps must be true or false" });
@@ -13783,7 +13774,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       // to open by hand instead.
       const workspacePath = memoryOverview(m[1]).workspacePath;
       if (auth.kind !== "loopback") {
-        return json(res, 403, { error: `This only works on the computer running OpenMausBot. The memory folder there is ${workspacePath}`, workspacePath });
+        return json(res, 403, { error: `This only works on the computer running Open Orgo Bot. The memory folder there is ${workspacePath}`, workspacePath });
       }
       const opened = await openMemoryLocation(m[1], parsed.data.target);
       if (!opened.ok) return json(res, 500, { error: opened.error, workspacePath: opened.workspacePath });
@@ -14461,7 +14452,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 200, { bot: fresh });
     }
 
-    // Named team Boxes use real independent ownership, never a hidden bot or
+    // Named team Orgoes use real independent ownership, never a hidden bot or
     // an arbitrary provider id. These new routes remain admin-only by default.
     if (path === "/api/team-computers" && method === "GET") {
       res.setHeader("cache-control", "private, no-store");
@@ -14481,14 +14472,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       found = computerId ? teamComputers.get(computerId) : undefined;
       const assertCurrentOwner = () => {
         if (auth.kind === "session" && !sessions.isLive(auth.session.id)) throw Object.assign(new Error("Your session ended; sign in again"), { status: 401 });
-        if (computerProviderConfigTransitions.has("box")) throw Object.assign(new Error(providerTransitionMessage("box")), { status: 409 });
+        if (computerProviderConfigTransitions.has("orgo")) throw Object.assign(new Error(providerTransitionMessage("orgo")), { status: 409 });
       };
       assertCurrentOwner();
       if (action === "control" && method === "POST" && found) {
         const parsed = z.object({ action: z.enum(["take", "release"]), controlLeaseId: controlLeaseIdSchema.optional() }).strict().safeParse(body);
         if (!parsed.success) return json(res, 400, { error: "Choose take or release with a valid optional controlLeaseId" });
         const key = teamComputerOwner(found.id);
-        if (parsed.data.action === "take" && boxLifecycleBusyBots.has(key)) return json(res, 409, { error: "Wait for this computer's action to finish before taking control" });
+        if (parsed.data.action === "take" && orgoLifecycleBusyBots.has(key)) return json(res, 409, { error: "Wait for this computer's action to finish before taking control" });
         if (parsed.data.action === "take") assertTeamControlCanBeTaken(found.id);
         if (parsed.data.controlLeaseId) {
           const result = parsed.data.action === "take"
@@ -14506,13 +14497,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           assertCurrentOwner();
           if (section !== null && section !== "" && !store.sections.includes(section)) throw Object.assign(new Error("Create the team before assigning a computer"), { status: 404 });
           if (section !== null && store.bots.some(bot => sectionKey(bot.section) === section && (
-            botHasActiveTurn(bot.id) || routines?.activeRunForBot(bot.id) || botComputerControlSnapshot(bot.id).held || boxLifecycleBusyBots.has(bot.id)
+            botHasActiveTurn(bot.id) || routines?.activeRunForBot(bot.id) || botComputerControlSnapshot(bot.id).held || orgoLifecycleBusyBots.has(bot.id)
           ))) throw Object.assign(new Error("Stop the target team's work and release computer control before assigning this computer"), { status: 409 });
         };
         checkAssignment();
         const release = claimTeamComputerLifecycle(found);
         try {
-          if (section !== null && !(await box.findBox(cfg, teamComputerOwner(found.id)))) return json(res, 409, { error: "Create or retry this computer before assigning it to a team" });
+          if (section !== null && !(await orgo.findOrgo(cfg, teamComputerOwner(found.id)))) return json(res, 409, { error: "Create or retry this computer before assigning it to a team" });
           checkAssignment();
           if (teamComputerInUse(found)) return json(res, 409, { error: "This team computer became busy; stop its work before assigning it" });
           teamComputers.assign(found.id, section);
@@ -14521,12 +14512,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
       if (method === "POST" && !computerId) {
         const parsed = teamComputerCreate.safeParse(body);
-        if (!parsed.success) return json(res, 400, { error: "Provide requestId (UUID), a name, and acknowledgeCost: true to create a paid Box" });
-        if (!box.boxConfigured(cfg)) return json(res, 409, { error: "Configure Box in Settings before creating a cloud computer" });
+        if (!parsed.success) return json(res, 400, { error: "Provide requestId (UUID), a name, and acknowledgeCost: true to create a paid Orgo" });
+        if (!orgo.orgoConfigured(cfg)) return json(res, 409, { error: "Configure Orgo in Settings before creating a cloud computer" });
         const computer = teamComputers.create(parsed.data.name, parsed.data.requestId);
         const release = claimTeamComputerLifecycle(computer);
         try {
-          await box.provisionBox(cfg, teamComputerOwner(computer.id), computer.name);
+          await orgo.provisionOrgo(cfg, teamComputerOwner(computer.id), computer.name);
           teamComputers.setProblem(computer.id);
           return json(res, 201, { id: computer.id });
         } catch (error) {
@@ -14535,22 +14526,22 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         } finally { release(); }
       }
       if (method === "POST" && found && action && action !== "control") {
-        if (action === "provision" && body?.acknowledgeCost !== true) return json(res, 400, { error: "Confirm Box creation or wake costs with acknowledgeCost: true" });
+        if (action === "provision" && body?.acknowledgeCost !== true) return json(res, 400, { error: "Confirm Orgo creation or wake costs with acknowledgeCost: true" });
         // A ready-only join never wakes, provisions or steals an agent's turn.
         // The caller takes a separate explicit human-control lease first.
         if (action === "join") {
           const key = teamComputerOwner(found.id);
-          if (boxLifecycleBusyBots.has(key)) return json(res, 409, { error: "Wait for this computer's action to finish" });
+          if (orgoLifecycleBusyBots.has(key)) return json(res, 409, { error: "Wait for this computer's action to finish" });
           if (!computerControl.snapshot(key).held) return json(res, 409, { error: "Take control before opening this shared desktop" });
           const release = claimBotComputerLifecycle(key);
-          try { return json(res, 200, await box.joinReadyBox(cfg, key)); }
+          try { return json(res, 200, await orgo.joinReadyOrgo(cfg, key)); }
           finally { release(); }
         }
         const release = claimTeamComputerLifecycle(found);
         try {
           const result = action === "provision"
-            ? await box.provisionBox(cfg, teamComputerOwner(found.id), found.name)
-            : await box.sleepBox(cfg, teamComputerOwner(found.id));
+            ? await orgo.provisionOrgo(cfg, teamComputerOwner(found.id), found.name)
+            : await orgo.sleepOrgo(cfg, teamComputerOwner(found.id));
           teamComputers.setProblem(found.id);
           return json(res, 200, result);
         } catch (error) {
@@ -14561,37 +14552,45 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 405, { error: "method not allowed" });
     }
 
-    // Account-wide Box inventory is a Settings surface, never a provisioning
+    // Account-wide Orgo inventory is a Settings surface, never a provisioning
     // path. Listing remains read-only; lifecycle changes require explicit
     // JSON actions and are revalidated against a fresh provider listing.
-    if (method === "GET" && path === "/api/computers/boxes") {
+    if (method === "GET" && path === "/api/computers/orgo") {
       res.setHeader("cache-control", "private, no-store");
-      return json(res, 200, await box.listManagedBoxes(cfg, managedBoxOwners()));
+      return json(res, 200, await orgo.listManagedOrgos(cfg, managedOrgoOwners()));
     }
-    m = path.match(/^\/api\/computers\/boxes\/([\w-]+)\/(sleep|delete)$/);
+    if (method === "GET" && path === "/api/orgo/workspaces") {
+      res.setHeader("cache-control", "private, no-store");
+      if (!orgo.orgoConfigured(cfg)) return json(res, 409, { error: "Connect Orgo before choosing a workspace" });
+      return json(res, 200, {
+        workspaces: await orgo.listOrgoWorkspaces(cfg),
+        selectedWorkspaceId: cfg.orgo?.workspaceId ?? "",
+      });
+    }
+    m = path.match(/^\/api\/computers\/orgo\/([\w-]+)\/(sleep|delete)$/);
     if (m && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       const body = await readBody(req);
-      if (computerProviderConfigTransitions.has("box")) {
-        return json(res, 409, { error: providerTransitionMessage("box") });
+      if (computerProviderConfigTransitions.has("orgo")) {
+        return json(res, 409, { error: providerTransitionMessage("orgo") });
       }
-      const releaseInventoryRequest = claimBoxInventoryRequest(m[1]);
+      const releaseInventoryRequest = claimOrgoInventoryRequest(m[1]);
       try {
-        const owners = managedBoxOwners();
+        const owners = managedOrgoOwners();
         if (m[2] === "sleep") {
-          return json(res, 200, await box.sleepManagedBox(cfg, owners, m[1], claimManagedBoxMutation));
+          return json(res, 200, await orgo.sleepManagedOrgo(cfg, owners, m[1], claimManagedOrgoMutation));
         }
         if (typeof body?.confirmName !== "string" || body.confirmName.length > 100) {
           return json(res, 400, { error: "confirmName must be the cloud computer name shown in Settings" });
         }
-        return json(res, 202, await box.deleteManagedBox(
+        return json(res, 202, await orgo.deleteManagedOrgo(
           cfg,
           owners,
           m[1],
           body.confirmName,
-          claimManagedBoxMutation,
+          claimManagedOrgoMutation,
         ));
       } finally {
         releaseInventoryRequest();
@@ -14599,7 +14598,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
     if (method === "GET" && path === "/api/computers/vps") {
       res.setHeader("cache-control", "private, no-store");
-      return json(res, 200, await vps.listManagedVpsComputers(cfg, managedBoxOwners()));
+      return json(res, 200, await vps.listManagedVpsComputers(cfg, managedOrgoOwners()));
     }
     m = path.match(/^\/api\/computers\/vps\/([\w-]+)\/remove$/);
     if (m && method === "POST") {
@@ -14617,7 +14616,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       try {
         return json(res, 200, await vps.removeManagedVpsComputer(
           cfg,
-          managedBoxOwners(),
+          managedOrgoOwners(),
           m[1],
           body.confirmName,
         ));
@@ -14693,7 +14692,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      if (boxLifecycleBusyBots.has(bot.id)) {
+      if (orgoLifecycleBusyBots.has(bot.id)) {
         return json(res, 409, { error: "this bot's computer is being changed or deleted — wait for it to finish" });
       }
       const action = z.enum(["run", "stop", "remove"]).parse(m[2]);
@@ -14949,7 +14948,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 200, { instances: await describeInstances() });
         }
         if (action === "install") {
-          if (!(await registry.installRuntime(instanceId))) return json(res, 404, { error: "Installing this engine from Settings is not available on this server. Use the install command on the machine running OpenMausBot." });
+          if (!(await registry.installRuntime(instanceId))) return json(res, 404, { error: "Installing this engine from Settings is not available on this server. Use the install command on the machine running Open Orgo Bot." });
           return json(res, 200, { instances: await describeInstances() });
         }
         if (action === "auth/start") {
@@ -15320,17 +15319,22 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           });
         }
       }
-      if (patch.box?.token !== undefined) patch.box.token = patch.box.token.trim();
-      const currentBoxToken = cfg.box?.token?.trim() ?? "";
-      const nextBoxToken = patch.box?.token === undefined ? currentBoxToken : patch.box.token;
-      const changingBoxToken = patch.box?.token !== undefined && nextBoxToken !== currentBoxToken;
+      if (patch.orgo?.apiKey !== undefined) patch.orgo.apiKey = patch.orgo.apiKey.trim();
+      if (patch.orgo?.workspaceId !== undefined) patch.orgo.workspaceId = patch.orgo.workspaceId.trim();
+      const currentOrgoToken = cfg.orgo?.apiKey?.trim() ?? "";
+      const nextOrgoToken = patch.orgo?.apiKey === undefined ? currentOrgoToken : patch.orgo.apiKey;
+      const changingOrgoToken = patch.orgo?.apiKey !== undefined && nextOrgoToken !== currentOrgoToken;
+      const currentOrgoWorkspace = cfg.orgo?.workspaceId?.trim() ?? "";
+      const nextOrgoWorkspace = patch.orgo?.workspaceId === undefined ? currentOrgoWorkspace : patch.orgo.workspaceId;
+      const changingOrgoWorkspace = patch.orgo?.workspaceId !== undefined && nextOrgoWorkspace !== currentOrgoWorkspace;
+      const changingOrgoConnection = changingOrgoToken || changingOrgoWorkspace;
       const currentVpsAlias = vpsSshAlias(cfg);
       const nextVpsAlias = patch.vps === undefined
         ? currentVpsAlias
         : vpsSshAlias({ ...cfg, vps: patch.vps });
       const changingVpsAlias = patch.vps !== undefined && nextVpsAlias !== currentVpsAlias;
       const transitioningProviders: RemoteComputerProvider[] = [
-        ...(changingBoxToken ? ["box" as const] : []),
+        ...(changingOrgoConnection ? ["orgo" as const] : []),
         ...(changingVpsAlias ? ["vps" as const] : []),
       ];
       providerConfigBusy = true;
@@ -15346,7 +15350,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (changingVpsAlias && currentVpsAlias) {
           const inventory = await vps.listManagedVpsComputers(
             { vps: { sshAlias: currentVpsAlias } },
-            managedBoxOwners(),
+            managedOrgoOwners(),
           );
           if (!inventory.available) {
             return json(res, 503, {
@@ -15357,46 +15361,46 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           if (resourceError) return json(res, 409, { error: resourceError });
         }
 
-        const boxRecovery = changingBoxToken ? boxCreateRecoverySnapshot() : [];
-        let currentBoxInventory: box.ManagedBoxInventory | null = null;
-        let currentBoxResources: Array<{ boxId: string; name: string }> | null = null;
-        const journalBoxResources: Array<{ boxId: string; name: string }> = [];
-        if (changingBoxToken && currentBoxToken) {
-          currentBoxInventory = await box.listManagedBoxes(
-            { box: { token: currentBoxToken } },
-            managedBoxOwners(),
+        const orgoRecovery = changingOrgoToken ? orgoCreateRecoverySnapshot() : [];
+        let currentOrgoInventory: orgo.ManagedOrgoInventory | null = null;
+        let currentOrgoResources: Array<{ computerId: string; name: string }> | null = null;
+        const journalOrgoResources: Array<{ computerId: string; name: string }> = [];
+        if (changingOrgoToken && currentOrgoToken) {
+          currentOrgoInventory = await orgo.listManagedOrgos(
+            { orgo: { apiKey: currentOrgoToken } },
+            managedOrgoOwners(),
           );
-          if (!currentBoxInventory.available) {
+          if (!currentOrgoInventory.available) {
             return json(res, 503, {
-              error: `${currentBoxInventory.problem ?? "cloud computer inventory is unavailable"}. Keep the current Box account and retry`,
+              error: `${currentOrgoInventory.problem ?? "cloud computer inventory is unavailable"}. Keep the current Orgo account and retry`,
             });
           }
           const currentById = new Map(
-            currentBoxInventory.instances.map((instance) => [instance.boxId, { boxId: instance.boxId, name: instance.name }]),
+            currentOrgoInventory.instances.map((instance) => [instance.computerId, { computerId: instance.computerId, name: instance.name }]),
           );
-          for (const recovery of boxRecovery) {
-            if (!recovery.boxId) continue;
-            const inspected = await box.inspectBoxIdentity({ box: { token: currentBoxToken } }, recovery.boxId);
+          for (const recovery of orgoRecovery) {
+            if (!recovery.computerId) continue;
+            const inspected = await orgo.inspectOrgoIdentity({ orgo: { apiKey: currentOrgoToken } }, recovery.computerId);
             if (!inspected.available) {
               return json(res, 503, {
-                error: `${inspected.problem ?? "a remembered cloud computer could not be verified"}. Keep the current Box account and retry`,
+                error: `${inspected.problem ?? "a remembered cloud computer could not be verified"}. Keep the current Orgo account and retry`,
               });
             }
             if (!inspected.identity) {
               // Reconcile exact stale receipts while the current credential is
               // still available. Leaving one behind would make a later token
-              // addition demand access to a Box the provider proved is gone.
-              retireDeletedBoxCreate(recovery.boxId);
+              // addition demand access to a Orgo the provider proved is gone.
+              retireDeletedOrgoCreate(recovery.computerId);
               continue;
             }
-            const listed = currentById.get(inspected.identity.boxId);
+            const listed = currentById.get(inspected.identity.computerId);
             if (listed && listed.name !== inspected.identity.name) {
-              return json(res, 503, { error: "ascii.dev returned conflicting cloud computer identities; keep the current Box account and retry" });
+              return json(res, 503, { error: "Orgo returned conflicting cloud computer identities; keep the current Orgo account and retry" });
             }
-            currentById.set(inspected.identity.boxId, inspected.identity);
-            journalBoxResources.push(inspected.identity);
+            currentById.set(inspected.identity.computerId, inspected.identity);
+            journalOrgoResources.push(inspected.identity);
           }
-          currentBoxResources = [...currentById.values()];
+          currentOrgoResources = [...currentById.values()];
         }
 
         if (changingLocalVmMode) {
@@ -15433,69 +15437,67 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           patch.composio = { ...patch.composio, apiKey: "", sessionId: "" };
         }
       }
-      // check a box token against the provider before storing it: a
+      // check a orgo token against the provider before storing it: a
       // rejected token used to save happily and only surface as a 401 in
       // another panel later, with nothing the user could act on
-      const newBoxToken = patch.box?.token;
-      if (newBoxToken?.trim()) {
-        const check = await box.verifyToken(newBoxToken);
+      if (changingOrgoConnection && nextOrgoToken) {
+        const check = await orgo.verifyApiKey(nextOrgoToken, nextOrgoWorkspace || undefined);
         if (!check.ok) return json(res, 400, { error: check.message });
       }
-      if (changingBoxToken && !currentBoxToken && boxRecovery.length > 0) {
-        if (!nextBoxToken) {
-          return json(res, 409, { error: "restore the Box account that owns the remembered cloud computers before clearing it" });
+      if (changingOrgoToken && !currentOrgoToken && orgoRecovery.length > 0) {
+        if (!nextOrgoToken) {
+          return json(res, 409, { error: "restore the Orgo account that owns the remembered cloud computers before clearing it" });
         }
-        for (const recovery of boxRecovery) {
-          if (!recovery.boxId) {
-            return json(res, 409, { error: "finish reconciling pending cloud computer creation before changing the Box account" });
+        for (const recovery of orgoRecovery) {
+          if (!recovery.computerId) {
+            return json(res, 409, { error: "finish reconciling pending cloud computer creation before changing the Orgo account" });
           }
-          const inspected = await box.inspectBoxIdentity({ box: { token: nextBoxToken } }, recovery.boxId);
+          const inspected = await orgo.inspectOrgoIdentity({ orgo: { apiKey: nextOrgoToken } }, recovery.computerId);
           if (!inspected.available) {
             return json(res, 503, {
-              error: `${inspected.problem ?? "a remembered cloud computer could not be verified"}. Retry with the Box account that created it`,
+              error: `${inspected.problem ?? "a remembered cloud computer could not be verified"}. Retry with the Orgo account that created it`,
             });
           }
-          if (!inspected.identity || !(await box.boxNameMatchesBot(recovery.botId, inspected.identity.name))) {
-            return json(res, 409, { error: "that Box token cannot access the remembered cloud computers from this installation" });
+          if (!inspected.identity || !(await orgo.orgoNameMatchesBot(recovery.botId, inspected.identity.name))) {
+            return json(res, 409, { error: "that Orgo token cannot access the remembered cloud computers from this installation" });
           }
         }
       }
-      if (changingBoxToken && currentBoxInventory && currentBoxResources) {
-        let replacementResources: Array<{ boxId: string; name: string }> | null = null;
-        if (nextBoxToken) {
-          const replacementInventory = await box.listManagedBoxes(
-            { box: { token: nextBoxToken } },
-            managedBoxOwners(),
-            { adoptLegacy: false },
+      if (changingOrgoToken && currentOrgoInventory && currentOrgoResources) {
+        let replacementResources: Array<{ computerId: string; name: string }> | null = null;
+        if (nextOrgoToken) {
+          const replacementInventory = await orgo.listManagedOrgos(
+            { orgo: { apiKey: nextOrgoToken } },
+            managedOrgoOwners(),
           );
           if (!replacementInventory.available) {
             return json(res, 503, {
-              error: `${replacementInventory.problem ?? "cloud computer inventory is unavailable"}. Keep the current Box account and retry`,
+              error: `${replacementInventory.problem ?? "cloud computer inventory is unavailable"}. Keep the current Orgo account and retry`,
             });
           }
           replacementResources = replacementInventory.instances.map((instance) => ({
-            boxId: instance.boxId,
+            computerId: instance.computerId,
             name: instance.name,
           }));
           const replacementById = new Map(
-            replacementResources.map((instance) => [instance.boxId, { boxId: instance.boxId, name: instance.name }]),
+            replacementResources.map((instance) => [instance.computerId, { computerId: instance.computerId, name: instance.name }]),
           );
-          for (const identity of journalBoxResources) {
-            const inspected = await box.inspectBoxIdentity({ box: { token: nextBoxToken } }, identity.boxId);
+          for (const identity of journalOrgoResources) {
+            const inspected = await orgo.inspectOrgoIdentity({ orgo: { apiKey: nextOrgoToken } }, identity.computerId);
             if (!inspected.available) {
               return json(res, 503, {
-                error: `${inspected.problem ?? "a remembered cloud computer could not be verified"}. Keep the current Box account and retry`,
+                error: `${inspected.problem ?? "a remembered cloud computer could not be verified"}. Keep the current Orgo account and retry`,
               });
             }
             if (!inspected.identity || inspected.identity.name !== identity.name) {
-              return json(res, 409, { error: "the replacement Box token does not access the same cloud computers" });
+              return json(res, 409, { error: "the replacement Orgo token does not access the same cloud computers" });
             }
-            replacementById.set(inspected.identity.boxId, inspected.identity);
+            replacementById.set(inspected.identity.computerId, inspected.identity);
           }
           replacementResources = [...replacementById.values()];
         }
-        const resourceError = boxAccountResourceChangeError(
-          currentBoxResources,
+        const resourceError = orgoAccountResourceChangeError(
+          currentOrgoResources,
           replacementResources,
         );
         if (resourceError) return json(res, 409, { error: resourceError });
@@ -15557,7 +15559,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const persisted = structuredClone(patch);
           if (persisted.xai?.key !== undefined) persisted.xai.key = "";
           if (persisted.composio?.apiKey !== undefined) persisted.composio.apiKey = "";
-          if (persisted.box?.token !== undefined) persisted.box.token = "";
+          if (persisted.orgo?.apiKey !== undefined) persisted.orgo.apiKey = "";
           if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";
           if (persisted.tts?.key !== undefined) persisted.tts.key = "";
           if (persisted.imageGen?.key !== undefined) persisted.imageGen.key = "";
@@ -15900,16 +15902,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 405, { error: "method not allowed" });
     }
 
-    // ── the bot's cloud computer (Box) ──
+    // ── the bot's cloud computer (Orgo) ──
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer$/);
     if (m && method === "GET") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const teamComputer = inheritedTeamComputer(bot);
-      if (teamComputer) return json(res, 200, { backend: "box", teamComputer: { id: teamComputer.id, name: teamComputer.name }, ...(await box.boxStatus(cfg, teamComputerOwner(teamComputer.id))) });
+      if (teamComputer) return json(res, 200, { backend: "orgo", teamComputer: { id: teamComputer.id, name: teamComputer.name }, ...(await orgo.orgoStatus(cfg, teamComputerOwner(teamComputer.id))) });
       return bot.cloudBackend === "vps"
         ? json(res, 200, { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) })
-        : json(res, 200, { backend: "box", ...(await box.boxStatus(cfg, bot.id)) });
+        : json(res, 200, { backend: "orgo", ...(await orgo.orgoStatus(cfg, bot.id)) });
     }
     // Who is driving this bot's computer. GET is the panel's initial read;
     // POST take/release/dismiss-help are the person's three moves. The bot
@@ -15940,7 +15942,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 400, { error: "controlLeaseId is invalid" });
         }
         const controlLeaseId = leaseResult?.data;
-        if (action === "take" && (boxLifecycleBusyBots.has(bot.id) || boxLifecycleBusyBots.has(controlKey))) {
+        if (action === "take" && (orgoLifecycleBusyBots.has(bot.id) || orgoLifecycleBusyBots.has(controlKey))) {
           return json(res, 409, { error: "this bot's cloud computer is being changed — wait before taking control" });
         }
         if (action === "take" && controlLeaseId) {
@@ -15980,29 +15982,29 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       // request (same reasoning as the Local VM lifecycle routes above): a
       // hostile page cannot submit it with a form, and its cross-origin JSON
       // request dies in the preflight this server never answers. Applied to
-      // both backends — the Box branch runs commands too.
+      // both backends — the Orgo branch runs commands too.
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
-      const remoteProvider: RemoteComputerProvider = bot.cloudBackend === "vps" ? "vps" : "box";
+      const remoteProvider: RemoteComputerProvider = bot.cloudBackend === "vps" ? "vps" : "orgo";
       if (computerProviderConfigTransitions.has(remoteProvider)) {
         return json(res, 409, { error: providerTransitionMessage(remoteProvider) });
       }
-      if (boxLifecycleBusyBots.has(botId)) {
+      if (orgoLifecycleBusyBots.has(botId)) {
         return json(res, 409, { error: "this bot's cloud computer is being changed — wait for it to finish" });
       }
       const teamComputer = inheritedTeamComputer(bot);
       if (teamComputer) {
         const key = teamComputerOwner(teamComputer.id);
-        if (boxLifecycleBusyBots.has(key)) return json(res, 409, { error: "This team computer is being changed; wait for it to finish" });
+        if (orgoLifecycleBusyBots.has(key)) return json(res, 409, { error: "This team computer is being changed; wait for it to finish" });
         if (m[2] === "provision" || m[2] === "remove") return json(res, 409, { error: "Manage this shared computer from the Team map" });
         if (m[2] === "exec") return json(res, 409, { error: "Use the bot's scoped computer tools for this shared desktop" });
         if (m[2] === "join" && !computerControl.snapshot(key).held) return json(res, 409, { error: "Take control before opening this shared desktop" });
         const release = m[2] === "sleep" ? claimTeamComputerLifecycle(teamComputer) : claimBotComputerLifecycle(key);
         try {
-          if (m[2] === "join") return json(res, 200, await box.joinReadyBox(cfg, key));
-          if (m[2] === "screenshot") return json(res, 200, await box.screenshotBox(cfg, key));
-          return json(res, 200, await box.sleepBox(cfg, key));
+          if (m[2] === "join") return json(res, 200, await orgo.joinReadyOrgo(cfg, key));
+          if (m[2] === "screenshot") return json(res, 200, await orgo.screenshotOrgo(cfg, key));
+          return json(res, 200, await orgo.sleepOrgo(cfg, key));
         } finally { release(); }
       }
       if (bot.cloudBackend === "vps") {
@@ -16038,8 +16040,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           releaseComputerLifecycle();
         }
       }
-      const activeBoxTurn = botHasActiveTurn(botId);
-      if (["provision", "sleep"].includes(m[2]) && activeBoxTurn) {
+      const activeOrgoTurn = botHasActiveTurn(botId);
+      if (["provision", "sleep"].includes(m[2]) && activeOrgoTurn) {
         return json(res, 409, {
           error: "this bot's cloud computer is being used by an active turn — interrupt it first",
         });
@@ -16047,11 +16049,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       // Input validity is independent of destination authorization. Preserve
       // the stable 400 contract for oversized commands without contacting the
       // provider; a valid Auto request still reaches the 409 gate below.
-      let boxCommand: string | undefined;
+      let orgoCommand: string | undefined;
       if (m[2] === "exec") {
         const body = await readBody(req);
-        boxCommand = String(body?.command ?? "");
-        if (boxCommand.length > MAX_REMOTE_COMMAND_LENGTH) {
+        orgoCommand = String(body?.command ?? "");
+        if (orgoCommand.length > MAX_REMOTE_COMMAND_LENGTH) {
           return json(res, 400, {
             error: `command is too long (maximum ${MAX_REMOTE_COMMAND_LENGTH} characters)`,
           });
@@ -16059,26 +16061,26 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
       if (bot.computer !== "cloud") {
         return json(res, 409, {
-          error: "Choose Cloud before changing or opening this Box. Auto only checks existing computer state.",
+          error: "Choose Cloud before changing or opening this Orgo. Auto only checks existing computer state.",
         });
       }
       if (m[2] === "remove") {
-        // Boxes sleep and wake; only the VPS backend has a container to remove.
-        return json(res, 409, { error: "the cloud Box backend has no container to remove — use sleep instead" });
+        // Orgoes sleep and wake; only the VPS backend has a container to remove.
+        return json(res, 409, { error: "the cloud Orgo backend has no container to remove — use sleep instead" });
       }
       const releaseComputerLifecycle = claimBotComputerLifecycle(botId);
       try {
         switch (m[2]) {
           case "provision":
-            return json(res, 200, await box.provisionBox(cfg, botId, bot.name));
+            return json(res, 200, await orgo.provisionOrgo(cfg, botId, bot.name));
           case "join":
-            return json(res, 200, await (activeBoxTurn ? box.joinReadyBox(cfg, botId) : box.joinBox(cfg, botId)));
+            return json(res, 200, await (activeOrgoTurn ? orgo.joinReadyOrgo(cfg, botId) : orgo.joinOrgo(cfg, botId)));
           case "sleep":
-            return json(res, 200, await box.sleepBox(cfg, botId));
+            return json(res, 200, await orgo.sleepOrgo(cfg, botId));
           case "exec":
-            return json(res, 200, await box.execOnBox(cfg, botId, boxCommand ?? ""));
+            return json(res, 200, await orgo.execOnOrgo(cfg, botId, orgoCommand ?? ""));
           case "screenshot":
-            return json(res, 200, await box.screenshotBox(cfg, botId));
+            return json(res, 200, await orgo.screenshotOrgo(cfg, botId));
         }
       } finally {
         releaseComputerLifecycle();

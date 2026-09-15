@@ -809,7 +809,7 @@ describe("config status frames", () => {
       configStatusFromFrame({
         xai: { configured: true },
         composio: { configured: true, mode: "managed" },
-        box: { configured: false },
+        orgo: { configured: false },
         vps: { configured: true, sshAlias: "homelab" },
         rooms: { turnTimeoutMinutes: 20 },
         threads: { maxConcurrentPerBot: 10 },
@@ -822,7 +822,7 @@ describe("config status frames", () => {
     ).toEqual({
       xai: { configured: true },
       composio: { configured: true, mode: "managed" },
-      box: { configured: false },
+      orgo: { configured: false },
       vps: { configured: true, sshAlias: "homelab" },
       rooms: { turnTimeoutMinutes: 20 },
       threads: { maxConcurrentPerBot: 10 },
@@ -889,7 +889,7 @@ describe("task rename", () => {
 describe("config status", () => {
   const config = configStatusFromFrame({
     composio: { configured: false },
-    box: { configured: false },
+    orgo: { configured: false },
     vps: { configured: false, sshAlias: "" },
     rooms: { turnTimeoutMinutes: 5 },
     localVm: { mode: "shared", maxInstances: 2 },
@@ -1832,7 +1832,7 @@ describe("bot settings section", () => {
 describe("live config frames", () => {
   const baseFrame: ConfigStatusFrame = {
     composio: { configured: false },
-    box: { configured: false },
+    orgo: { configured: false },
     vps: { configured: false, sshAlias: "" },
     rooms: { turnTimeoutMinutes: 10 },
     localVm: { mode: "shared", maxInstances: 1 },

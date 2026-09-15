@@ -27,8 +27,8 @@ final class ProfileRoutinePolicyTests: XCTestCase {
     }
 
     func testCloudRunAvailabilityMatchesDesktopRequirements() throws {
-        let configured = try decodeConfig(#"{"box":{"configured":true}}"#)
-        let unconfigured = try decodeConfig(#"{"box":{"configured":false}}"#)
+        let configured = try decodeConfig(#"{"orgo":{"configured":true}}"#)
+        let unconfigured = try decodeConfig(#"{"orgo":{"configured":false}}"#)
         let available = try decodeInstances(state: "available")
         let unavailable = try decodeInstances(state: "unavailable")
 
@@ -122,9 +122,10 @@ final class ProfileRoutinePolicyTests: XCTestCase {
     private func decodeInstances(state: String) throws -> [Instance] {
         let json = """
         {"instances":[{
-          "instanceId":"box-1","driverKind":"boxAgent",
+          "instanceId":"hermes","driverKind":"acp",
           "snapshot":{"state":"\(state)"},
-          "models":{"default":"model-1","options":[]}
+          "models":{"default":"model-1","options":[]},
+          "capabilities":{"computerMcp":true}
         }]}
         """
         return try JSONDecoder().decode(InstanceList.self, from: Data(json.utf8)).instances

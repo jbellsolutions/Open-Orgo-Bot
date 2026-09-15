@@ -1,7 +1,7 @@
 export const CLOUD_BACKEND_CHANGE_ERROR = "stop the active turn before changing the cloud backend";
 export const VPS_ALIAS_CHANGE_ERROR = "stop the active VPS turn before changing the SSH config alias";
-export const BOX_ACCOUNT_RESOURCES_ERROR =
-  "remove this installation's cloud computers before changing or clearing the Box account";
+export const ORGO_ACCOUNT_RESOURCES_ERROR =
+  "remove this installation's cloud computers before changing or clearing the Orgo account";
 export const VPS_ALIAS_RESOURCES_ERROR =
   "remove this installation's VPS computers before changing or clearing the SSH config alias";
 
@@ -14,27 +14,27 @@ export function vpsAliasChangeError(currentAlias: string | null, nextAlias: stri
 }
 
 export interface CloudResourceIdentity {
-  boxId: string;
+  computerId: string;
   name: string;
 }
 
-/** An old Box account may be detached only when it owns no local resources.
+/** An old Orgo account may be detached only when it owns no local resources.
  * Token rotation is safe when the replacement credential proves access to
  * the exact same provider identities. */
-export function boxAccountResourceChangeError(
+export function orgoAccountResourceChangeError(
   current: CloudResourceIdentity[],
   replacement: CloudResourceIdentity[] | null,
 ): string | null {
   if (current.length === 0) return null;
-  if (!replacement || replacement.length !== current.length) return BOX_ACCOUNT_RESOURCES_ERROR;
+  if (!replacement || replacement.length !== current.length) return ORGO_ACCOUNT_RESOURCES_ERROR;
   const identities = (rows: CloudResourceIdentity[]) => rows
-    .map(({ boxId, name }) => `${boxId}\u0000${name}`)
+    .map(({ computerId, name }) => `${computerId}\u0000${name}`)
     .sort();
   const currentIdentities = identities(current);
   const replacementIdentities = identities(replacement);
   return currentIdentities.every((identity, index) => identity === replacementIdentities[index])
     ? null
-    : BOX_ACCOUNT_RESOURCES_ERROR;
+    : ORGO_ACCOUNT_RESOURCES_ERROR;
 }
 
 export function vpsAliasResourceChangeError(instanceCount: number): string | null {

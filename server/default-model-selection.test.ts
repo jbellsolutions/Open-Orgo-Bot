@@ -19,6 +19,12 @@ const claude = {
   snapshot: { state: "available", authenticated: true } satisfies ProviderSnapshot,
   models: { default: "claude-default", options: [{ id: "claude-default", label: "Claude" }] },
 };
+const hermes = {
+  instanceId: "hermes",
+  driverKind: "hermesAgent",
+  snapshot: { state: "available", authenticated: true } satisfies ProviderSnapshot,
+  models: { default: "hermes-default", options: [{ id: "hermes-default", label: "Hermes" }] },
+};
 
 describe("new bot default model selection", () => {
   it.each(["low", "high"] as const)("honors the configured provider, model, and supported %s effort ahead of the Claude preference", (effort) => {
@@ -61,7 +67,8 @@ describe("new bot default model selection", () => {
       .toEqual({ instanceId: "", model: "" });
   });
 
-  it("keeps the existing Claude preference when no default was saved", () => {
+  it("uses Hermes first when no default was saved", () => {
+    expect(selectDefaultModelSelection([codex, claude, hermes])).toEqual({ instanceId: "hermes", model: "hermes-default" });
     expect(selectDefaultModelSelection([codex, claude])).toEqual({ instanceId: "claude", model: "claude-default" });
     expect(selectDefaultModelSelection([codex])).toEqual({ instanceId: "codex", model: "codex-default" });
     expect(selectDefaultModelSelection([])).toEqual({ instanceId: "", model: "" });

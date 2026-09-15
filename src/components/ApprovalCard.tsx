@@ -1,4 +1,4 @@
-// The approval box: what the bot wants to do, and three ways to answer.
+// The approval orgo: what the bot wants to do, and three ways to answer.
 //
 // Deliberately not the lettered A/B/C list the onboarding card uses — an
 // approval is a decision about one concrete action, so it shows the tool

@@ -1,18 +1,18 @@
 // The bot's computer, in the right-side slot. Where it runs decides the
-// whole flow: explicit cloud → provision the box on open (idempotent) and preview
+// whole flow: explicit cloud → provision the orgo on open (idempotent) and preview
 // via SSE frames or a ~4s screenshot poll. macOS local mode keeps the legacy
 // in-panel capture. Linux local mode is an automation readiness state and its
 // separate preview remains explicitly user-initiated. Auto only reads an
-// existing Box's state: opening this panel never creates, wakes, bootstraps,
+// existing Orgo's state: opening this panel never creates, wakes, bootstraps,
 // screenshots, or opens one, regardless of engine.
-// An inherited team Box is shown as a shared resource, managed from Team map;
+// An inherited team Orgo is shown as a shared resource, managed from Team map;
 // it must never fall back to this host or become a private Cloud selection.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
   CalendarClock,
   Columns2,
-  Box,
+  Box as BoxIcon,
   Check,
   Cloud,
   Sparkles,
@@ -53,7 +53,7 @@ import {
   localComputerDisabledReason,
   localComputerSelectable,
   persistedComputerSelectionMatches,
-  resolveBoxPanelAction,
+  resolveOrgoPanelAction,
   shouldPollCloudPreview,
 } from "@/lib/local-computer";
 import {
@@ -105,10 +105,10 @@ type Phase =
   | "local"
   | "local-unavailable"
   | "auto-unavailable"
-  | "team-box"
-  | "show-ready-box"
-  | "show-sleeping-box"
-  | "show-pending-box"
+  | "team-orgo"
+  | "show-ready-orgo"
+  | "show-sleeping-orgo"
+  | "show-pending-orgo"
   | "browser"
   | "off"
   | "error";
@@ -205,7 +205,7 @@ export function ComputerPanel({
   const [teamComputer, setTeamComputer] = useState<{
     id: string; name: string; botId: string; section: string;
   } | null>(null);
-  const cloudBackend = bot.cloudBackend ?? "box";
+  const cloudBackend = bot.cloudBackend ?? "orgo";
   const computerSelectionPersisted = Boolean(
     persistedComputerSelection
       && persistedComputerSelection.botId === bot.id
@@ -219,7 +219,7 @@ export function ComputerPanel({
       && resolvedComputerSelection.computer === bot.computer
       && resolvedComputerSelection.cloudBackend === cloudBackend,
   );
-  const currentTeamComputer = computerStatusCurrent && bot.computer === undefined && cloudBackend === "box"
+  const currentTeamComputer = computerStatusCurrent && bot.computer === undefined && cloudBackend === "orgo"
     && teamComputer?.botId === bot.id && teamComputer.section === (bot.section?.trim() ?? "")
     ? teamComputer : null;
   const cloudPreviewReady = shouldPollCloudPreview({
@@ -266,7 +266,7 @@ export function ComputerPanel({
       alive = false;
     };
   }, [bot.id, bot.computer, bot.section, cloudBackend, flushBotPatches]);
-  const [boxState, setBoxState] = useState<string | null>(null);
+  const [boxState, setOrgoState] = useState<string | null>(null);
   const [polledFrame, setPolledFrame] = useState<{ png: string; mime: string } | null>(null);
   const [previewError, setPreviewError] = useState<Error | string | null>(null);
   const [previewRefreshing, setPreviewRefreshing] = useState(false);
@@ -294,20 +294,19 @@ export function ComputerPanel({
   const browserAvailableHere = browserAvailable(state.config);
   const browserEnabled = builtInBrowserEnabled(state.config) && bot.browser !== false
     && (browserAvailableHere || state.config?.browserEngine?.installable === true);
-  // bumped when a Box API key is saved inline, to re-run the spin-up flow
+  // bumped when a Orgo API key is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
   const vmReadinessAttempts = useRef(0);
   const selectedInstance = state.instances.find(
     (instance) => instance.instanceId === bot.modelSelection.instanceId,
   );
   // "Works on: Browser" needs the same things as the browser switch minus
-  // the switch itself — picking it turns the switch on. The box-native
-  // Computer engine runs inside the box, so it has no browser-only mode.
+  // the switch itself — picking it turns the switch on. The orgo-native
+  // Computer engine runs inside the orgo, so it has no browser-only mode.
   const browserSelectable =
     builtInBrowserEnabled(state.config) &&
     browserAvailableHere &&
-    selectedInstance?.capabilities?.browserMcp === true &&
-    selectedInstance.driverKind !== "boxAgent";
+    selectedInstance?.capabilities?.browserMcp === true;
   const browserDisabledReason = !browserAvailableHere
     ? browserUnavailableReason(state.config)
     : !builtInBrowserEnabled(state.config)
@@ -356,28 +355,27 @@ export function ComputerPanel({
   }, [bot.id, bot.computer]);
   const vmSupported = Boolean(
     selectedInstance?.snapshot.state === "available" &&
-      selectedInstance.capabilities?.computerMcp &&
-      selectedInstance.driverKind !== "boxAgent",
+      selectedInstance.capabilities?.computerMcp,
   );
   const computerToolSupported = selectedInstance?.capabilities?.computerMcp === true;
-  const vpsSupported = Boolean(computerToolSupported && selectedInstance?.driverKind !== "boxAgent");
+  const vpsSupported = Boolean(computerToolSupported);
   const cloudSupported = cloudBackend === "vps"
     ? vpsSupported
-    : computerToolSupported || selectedInstance?.driverKind === "boxAgent";
+    : computerToolSupported;
   const botRoutines = state.routines
     .filter((routine) => routine.botId === bot.id)
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (a.nextRunAt ?? Infinity) - (b.nextRunAt ?? Infinity));
   const cloudRoutineReady = Boolean(
-    state.config?.box.configured &&
-      state.instances.some((instance) => instance.driverKind === "boxAgent" && instance.snapshot.state === "available"),
+    state.config?.orgo.configured &&
+      state.instances.some((instance) => instance.capabilities?.computerMcp && instance.snapshot.state === "available"),
   );
   const activeRoutineRun = state.routineRuns.find(
     (run) => run.botId === bot.id && ["queued", "running", "waiting"].includes(run.status),
   );
-  // resolve the mode on open; box endpoints are only ever hit on the
+  // resolve the mode on open; orgo endpoints are only ever hit on the
   // cloud path, so local/off can never render a JSON error as an image
   useEffect(() => {
-    // Other tabs own their surfaces. Do not provision a VM, wake a box,
+    // Other tabs own their surfaces. Do not provision a VM, wake a orgo,
     // or churn preview state while reading routine history.
     if (panelView !== "computer") return;
     let alive = true;
@@ -401,7 +399,7 @@ export function ComputerPanel({
       return;
     }
     // Browser-only bots own no desktop: the Browser tab is their whole
-    // screen, so this tab must not wake a box or start host capture.
+    // screen, so this tab must not wake a orgo or start host capture.
     if (bot.computer === "browser") {
       setPhase("browser");
       return;
@@ -504,7 +502,7 @@ export function ComputerPanel({
             return;
           }
           if (status.ready) {
-            setBoxState(status.container ?? null);
+            setOrgoState(status.container ?? null);
             setPhase("ready");
             return;
           }
@@ -521,7 +519,7 @@ export function ComputerPanel({
             setPhase("starting");
             return api(`/api/bots/${bot.id}/computer/provision`, { method: "POST" }).then((result) => {
               if (!alive) return;
-              setBoxState(result.container ?? null);
+              setOrgoState(result.container ?? null);
               if (result.ready) {
                 setResolvedComputerSelection({
                   botId: bot.id,
@@ -540,7 +538,7 @@ export function ComputerPanel({
             setPhase("local");
             return;
           }
-          setBoxState(status.container ?? null);
+          setOrgoState(status.container ?? null);
           setError(
             bot.autoStartVps
               ? new LocalizedPanelError("computer.err.vpsAuto", status.problem, "computer.err.vpsNoContainer")
@@ -557,8 +555,8 @@ export function ComputerPanel({
         alive = false;
       };
     }
-    // Explicit Cloud may create/wake its Box. Auto is observation-only here:
-    // even a ready Box and the box-native engine stay free of POSTs until the
+    // Explicit Cloud may create/wake its Orgo. Auto is observation-only here:
+    // even a ready Orgo and the orgo-native engine stay free of POSTs until the
     // person deliberately chooses Cloud.
     api(`/api/bots/${bot.id}/computer`)
       .then((status) => {
@@ -569,10 +567,10 @@ export function ComputerPanel({
           capabilitiesReady,
           localSelectable,
         });
-        const action = resolveBoxPanelAction({
+        const action = resolveOrgoPanelAction({
           computer: bot.computer,
           configured: Boolean(status.configured),
-          boxState: typeof status.box?.state === "string" ? status.box.state : null,
+          boxState: typeof status.orgo?.state === "string" ? status.orgo.state : null,
           canUseCloud: cloudSupported,
           autoLocal,
           teamComputer: typeof status.teamComputer?.id === "string" && typeof status.teamComputer?.name === "string",
@@ -582,17 +580,17 @@ export function ComputerPanel({
           computer: bot.computer,
           cloudBackend,
         });
-        if (action === "team-box") {
+        if (action === "team-orgo") {
           setTeamComputer({ id: status.teamComputer.id, name: status.teamComputer.name,
             botId: bot.id, section: bot.section?.trim() ?? "" });
-          setBoxState(typeof status.box?.state === "string" ? status.box.state : status.configured ? "missing" : "unavailable");
+          setOrgoState(typeof status.orgo?.state === "string" ? status.orgo.state : status.configured ? "missing" : "unavailable");
           setError(typeof status.problem === "string" ? status.problem : null);
-          setPhase("team-box");
+          setPhase("team-orgo");
           return;
         }
-        if (action !== "ensure-box") {
-          if (action === "show-ready-box" || action === "show-sleeping-box" || action === "show-pending-box") {
-            setBoxState(typeof status.box?.state === "string" ? status.box.state : null);
+        if (action !== "ensure-orgo") {
+          if (action === "show-ready-orgo" || action === "show-sleeping-orgo" || action === "show-pending-orgo") {
+            setOrgoState(typeof status.orgo?.state === "string" ? status.orgo.state : null);
           }
           setPhase(action);
           return;
@@ -600,7 +598,7 @@ export function ComputerPanel({
         setPhase("starting");
         return api(`/api/bots/${bot.id}/computer/provision`, { method: "POST" }).then((r) => {
           if (!alive) return;
-          setBoxState(r.state ?? null);
+          setOrgoState(r.state ?? null);
           setResolvedComputerSelection({
             botId: bot.id,
             computer: bot.computer,
@@ -832,7 +830,7 @@ export function ComputerPanel({
     // BrowserPanel performs the same two-phase transition itself. Every
     // other computer surface must also gate Electron's direct browser host:
     // the server hold is bot-wide, and a shell-capable agent can otherwise
-    // bypass the server proxy while the person drives Local VM/Box/VPS.
+    // bypass the server proxy while the person drives Local VM/Orgo/VPS.
     return transitionComputerControlLease({
       action,
       syncNativeBrowser: panelView !== "browser",
@@ -913,7 +911,7 @@ export function ComputerPanel({
     api(`/api/bots/${bot.id}/computer/${kind}`, { method: "POST" })
       .then((result) => {
         if (kind === "provision") {
-          setBoxState(result.container ?? null);
+          setOrgoState(result.container ?? null);
           if (result.ready) {
             if (bot.computer === "cloud") {
               setResolvedComputerSelection({ botId: bot.id, computer: bot.computer, cloudBackend });
@@ -927,7 +925,7 @@ export function ComputerPanel({
         }
         if (kind === "sleep") {
           setResolvedComputerSelection(null);
-          setBoxState(cloudBackend === "vps" ? "stopped" : "archived");
+          setOrgoState(cloudBackend === "vps" ? "stopped" : "archived");
           if (cloudBackend === "vps") setPhase("vps-stopped");
         }
       })
@@ -988,7 +986,7 @@ export function ComputerPanel({
         body: "{}",
       });
       setVpsStatus(result);
-      setBoxState(result.container ?? null);
+      setOrgoState(result.container ?? null);
       if (result.ready && bot.computer === "cloud") {
         setResolvedComputerSelection({ botId: bot.id, computer: bot.computer, cloudBackend });
       }
@@ -1017,10 +1015,10 @@ export function ComputerPanel({
     starting: t("computer.phase.starting"),
     unconfigured: t("computer.phase.unconfigured"),
     "auto-unavailable": t("computer.phase.autoUnavailable"),
-    "team-box": "This bot uses a shared team computer. Open Team map to view or manage it.",
-    "show-ready-box": t("computer.phase.showReadyBox"),
-    "show-sleeping-box": t("computer.phase.showSleepingBox"),
-    "show-pending-box": t("computer.phase.showPendingBox"),
+    "team-orgo": "This bot uses a shared team computer. Open Team map to view or manage it.",
+    "show-ready-orgo": t("computer.phase.showReadyOrgo"),
+    "show-sleeping-orgo": t("computer.phase.showSleepingOrgo"),
+    "show-pending-orgo": t("computer.phase.showPendingOrgo"),
     "vps-unconfigured": t("computer.phase.vpsUnconfigured"),
     "vps-incompatible": t("computer.phase.vpsIncompatible"),
     "vps-stopped": t("computer.phase.vpsStopped"),
@@ -1144,8 +1142,8 @@ export function ComputerPanel({
             {currentTeamComputer && <span className="text-[11px]">Team default</span>}
             {phase === "local" && <span className="text-[11px]">{t("computer.badge.local")}</span>}
             {phase === "vm" && <span className="text-[11px]">{t("vm.dest.vm")}</span>}
-            {(phase === "show-ready-box" || phase === "show-sleeping-box" || phase === "show-pending-box") && (
-              <span className="text-[11px]">{t("computer.badge.autoBox")}</span>
+            {(phase === "show-ready-orgo" || phase === "show-sleeping-orgo" || phase === "show-pending-orgo") && (
+              <span className="text-[11px]">{t("computer.badge.autoOrgo")}</span>
             )}
             {computerStatusCurrent && bot.computer === "cloud" && cloudBackend === "vps" && (phase === "ready" || phase === "starting") && <span className="text-[11px]">{t("computer.badge.vps")}</span>}
         </div>
@@ -1223,7 +1221,7 @@ export function ComputerPanel({
                     : emptyState[phase]}
               </span>
               {currentTeamComputer && <>
-                <p className="text-[12px]">Shared files and signed-in accounts. Auto uses this Box, not a private computer.</p>
+                <p className="text-[12px]">Shared files and signed-in accounts. Auto uses this Orgo, not a private computer.</p>
                 <button type="button" onClick={() => dispatch({ type: "showTeamMap" })}
                   className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover">Open Team map</button>
                 <button type="button" onClick={() => setRetry(n => n + 1)}
@@ -1245,15 +1243,15 @@ export function ComputerPanel({
                   {t("computer.openBrowserTab")}
                 </button>
               )}
-              {(phase === "show-ready-box" || phase === "show-sleeping-box" || phase === "show-pending-box") && (
+              {(phase === "show-ready-orgo" || phase === "show-sleeping-orgo" || phase === "show-pending-orgo") && (
                 <button
                   type="button"
                   onClick={() => updateComputerSelection({ computer: "cloud" })}
                   className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
                 >
-                  {phase === "show-sleeping-box"
+                  {phase === "show-sleeping-orgo"
                     ? t("computer.chooseCloudWake")
-                    : phase === "show-ready-box"
+                    : phase === "show-ready-orgo"
                       ? t("computer.chooseCloudOpen")
                       : t("computer.chooseCloudManage")}
                 </button>
@@ -1323,10 +1321,10 @@ export function ComputerPanel({
         {phase === "unconfigured" && (
           <div className="mt-3 rounded-xl bg-card p-4">
             <div className="mb-3 text-[13px] text-ink-secondary">
-              {t("computer.addBoxKey")}
+              {t("computer.addOrgoKey")}
             </div>
             <ApiKeyRow
-              section="box"
+              section="orgo"
               onSaved={(configured) => configured && setRetry((n) => n + 1)}
             />
           </div>
@@ -1481,7 +1479,7 @@ export function ComputerPanel({
           </div>
         )}
 
-        {phase !== "team-box" && (bot.computer !== undefined || computerStatusCurrent) && <>
+        {phase !== "team-orgo" && (bot.computer !== undefined || computerStatusCurrent) && <>
           <LocalScreenPreview />
           <LinuxLocalControl />
           <MacLocalControl />
@@ -1497,7 +1495,7 @@ export function ComputerPanel({
             {([
               [null, "vm.dest.auto", "computer.dest.autoDesc", Sparkles],
               ["cloud", "vm.dest.cloud", "computer.dest.cloudDesc", Cloud],
-              ["vm", "vm.dest.vm", "computer.dest.vmDesc", Box],
+              ["vm", "vm.dest.vm", "computer.dest.vmDesc", BoxIcon],
               ["local", "vm.dest.local", "computer.dest.localDesc", Monitor],
               ["browser", "vm.dest.browser", "computer.dest.browserDesc", Globe],
               ["off", "vm.dest.off", "computer.dest.offDesc", Power],

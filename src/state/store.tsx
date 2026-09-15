@@ -82,7 +82,7 @@ export interface OptionCardData {
   dismissed?: boolean;
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
-  /** permission asks: the tool being requested (drives the approval box) */
+  /** permission asks: the tool being requested (drives the approval orgo) */
   tool?: string;
   /** why auto mode stopped to ask anyway */
   held?: string;
@@ -332,9 +332,9 @@ export interface Bot {
   activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
   modelSelection: ModelSelection;
   /** Where this bot works: a computer, only the built-in browser tab, or
-   * nowhere; unset = auto (cloud box if one exists, else local). */
+   * nowhere; unset = auto (cloud orgo if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "browser" | "off";
-  /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
+  /** Which cloud computer backs `computer: "cloud"`; absent means Orgo. */
   cloudBackend?: CloudBackend;
   /** Allow Auto to prepare/start the managed VPS container. Off by default. */
   autoStartVps?: boolean;
@@ -466,7 +466,7 @@ export interface ConfigStatus {
   budgets?: { monthlyUsd?: number; warnAtPercent?: number };
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
-  box: { configured: boolean };
+  orgo: { configured: boolean; workspaceId?: string };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
   threads?: { maxConcurrentPerBot: number };
@@ -522,14 +522,14 @@ export interface BrowserProfile {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "threads" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "browserEngine" | "browserProfiles" | "edition" | "budgets" | "billing"
+  "xai" | "composio" | "orgo" | "vps" | "rooms" | "threads" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "browserEngine" | "browserProfiles" | "edition" | "budgets" | "billing"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
   return {
     xai: frame.xai,
     composio: frame.composio,
-    box: frame.box,
+    orgo: frame.orgo,
     vps: frame.vps,
     rooms: frame.rooms,
     threads: frame.threads,

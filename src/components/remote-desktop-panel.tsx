@@ -77,9 +77,9 @@ export function RemoteDesktopPanel({ bot }: { bot: Bot }) {
     (run) => run.botId === bot.id && ["queued", "running", "waiting"].includes(run.status),
   );
   const cloudRoutineReady = Boolean(
-    state.config?.box.configured &&
+    state.config?.orgo.configured &&
       state.instances.some(
-        (instance) => instance.driverKind === "boxAgent" && instance.snapshot.state === "available",
+        (instance) => instance.driverKind === "hermesAgent" && instance.snapshot.state === "available",
       ),
   );
 
@@ -177,7 +177,7 @@ export function RemoteDesktopPanel({ bot }: { bot: Bot }) {
         `${bot.name}'s live desktop`,
         bot.id,
       );
-      if (!opened) throw new Error("OpenMausBot could not open the live desktop");
+      if (!opened) throw new Error("Open Orgo Bot could not open the live desktop");
     } catch (cause) {
       if (tookControl) {
         await api(`/api/bots/${bot.id}/computer/control`, {

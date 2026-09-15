@@ -64,7 +64,7 @@ export function codexPredatesAstra(version: string): boolean {
 
 /** Ask the configured executable to update itself. This matters when the user
  * selected a non-PATH Codex: installing a second global copy would leave
- * OpenMausBot pointing at the old binary. */
+ * Open Orgo Bot pointing at the old binary. */
 export function codexUpdateCommand(cli: string, platform: NodeJS.Platform = process.platform): string {
   if (cli === "codex") return "codex update";
   const trimmed = cli.trim();
@@ -112,7 +112,7 @@ function decodeConfig(raw: unknown): CodexConfig {
 
 const QUESTION_TIMEOUT_NOTE = "No answer was given — use your best judgment.";
 const DENY_TIMEOUT_NOTE =
-  "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+  "Open Orgo Bot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
 type StdioMcpServer = { command: string; args: string[]; env: Record<string, string> };
 
@@ -478,7 +478,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // The CLI owns its own ChatGPT login; a leaked API key silently flips
       // billing to pay-as-you-go (agentcal).
       delete env.OPENAI_API_KEY;
-      // The harness process may hold workspace credentials (xai/box/voice
+      // The harness process may hold workspace credentials (xai/Orgo/voice
       // keys, env-injected at boot); none of them are this CLI's to see.
       stripWorkspaceCredentialEnv(env);
       return env;
@@ -556,8 +556,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             args: [SPAWNED_PROXIES.computer],
             env: {
               ELECTRON_RUN_AS_NODE: "1",
-              OGB_BOX_ID: proxyEnv.OGB_BOX_ID ?? "",
-              OGB_BOX_TOKEN: proxyEnv.OGB_BOX_TOKEN ?? "",
+              OOB_ORGO_COMPUTER_ID: proxyEnv.OOB_ORGO_COMPUTER_ID ?? "",
+              OOB_ORGO_API_KEY: proxyEnv.OOB_ORGO_API_KEY ?? "",
               // who-is-driving endpoint, so a person taking the wheel in the
               // panel pauses this bot's hands mid-turn
               OMB_CONTROL_URL: proxyEnv.OMB_CONTROL_URL ?? "",
@@ -679,7 +679,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const settle = async (ok: boolean, stopReason: string | null) => {
         if (state.settled) return;
         state.settled = true;
-        for (const finish of Array.from(asks.values())) finish("deny", "OpenMausBot: the turn ended", "system");
+        for (const finish of Array.from(asks.values())) finish("deny", "Open Orgo Bot: the turn ended", "system");
         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
         rpcPending.clear();
         const complete = () => {
@@ -1085,7 +1085,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           approvalParams = namedApprovalParams(approvalMode);
         }
         // Codex's `never` means "do not ask to escalate", not "grant every
-        // requested permission". Only the user's explicit OpenMausBot Full
+        // requested permission". Only the user's explicit Open Orgo Bot Full
         // mode may synthesize approvals; Custom must preserve the sandbox
         // boundary from config.toml (for example never + read-only).
         autoAcceptPermissions = approvalMode === "full";

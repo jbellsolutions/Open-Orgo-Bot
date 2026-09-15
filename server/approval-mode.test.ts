@@ -37,7 +37,7 @@ describe("approval modes", () => {
 
   it.each([
     "geminiAgent", "kimiAgent", "droidAgent", "qwenAgent", "hermesAgent", "customAcp",
-    "piAgent", "grok", "openai-compat", "boxAgent", "minimax", "unknown",
+    "piAgent", "grok", "openai-compat", "minimax", "unknown",
   ])("keeps %s on supported approval levels without claiming native Auto", (driver) => {
     expect(supportsApprovalMode(driver, "ask")).toBe(true);
     expect(supportsApprovalMode(driver, "auto")).toBe(true);

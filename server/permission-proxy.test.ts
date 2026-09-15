@@ -5,7 +5,7 @@
 //
 // The case that matters most is the CLI's own AskUserQuestion. It arrives
 // through `approve` looking like a permission, and answering it as one is why
-// a multiple-choice question reached users as an Allow/Deny box over a
+// a multiple-choice question reached users as an Allow/Deny orgo over a
 // truncated JSON blob. It has to leave here as a question, and come back as
 // the `answers` object the tool documents — a bare allow makes the CLI run
 // the tool, and a headless run has no dialog, so the click is discarded
@@ -214,7 +214,7 @@ describe("permission proxy", () => {
     // is how the note ended up recorded as the person's chosen option.
     answerWith = () => ({
       behavior: "answer",
-      message: "OpenMausBot: nobody answered in time. Use your best judgment and continue.",
+      message: "Open Orgo Bot: nobody answered in time. Use your best judgment and continue.",
       source: "timeout",
     });
     rpc({
@@ -230,7 +230,7 @@ describe("permission proxy", () => {
   it("treats the turn ending the same way — system words are not the user's answer", async () => {
     answerWith = () => ({
       behavior: "answer",
-      message: "OpenMausBot: the turn is ending — wrap up.",
+      message: "Open Orgo Bot: the turn is ending — wrap up.",
       source: "system",
     });
     rpc({
@@ -246,7 +246,7 @@ describe("permission proxy", () => {
     // A question is only ever denied when nobody is there to be asked. Saying
     // "allow, nothing answered" there would tell the model a person declined
     // to choose, which is not what happened.
-    answerWith = () => ({ behavior: "deny", message: "OpenMausBot: permission broker unavailable" });
+    answerWith = () => ({ behavior: "deny", message: "Open Orgo Bot: permission broker unavailable" });
     rpc({
       jsonrpc: "2.0",
       id: 2,

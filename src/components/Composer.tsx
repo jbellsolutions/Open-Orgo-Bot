@@ -179,9 +179,9 @@ export function Composer({
     },
     [attachments, editAttachments],
   );
-  const displayPasteInChatBox = useCallback(
+  const displayPasteInChatOrgo = useCallback(
     /** Moves one pasted attachment into the editable draft and restores focus. */
-    function displayPasteInChatBox(attachment: PasteAttachment) {
+    function displayPasteInChatOrgo(attachment: PasteAttachment) {
       const nextText = appendPastedText(text, attachment.text);
       editText(nextText);
       editAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
@@ -582,7 +582,7 @@ export function Composer({
   };
 
   // native dictation: partials stream into the input while the Swift
-  // helper runs; the final transcript stays in the box, ready to edit/send
+  // helper runs; the final transcript stays in the orgo, ready to edit/send
   useEffect(() => {
     if (!recording) return;
     const bridge = window.ogb;
@@ -772,7 +772,7 @@ export function Composer({
           items={attachments}
           onAdd={addAttachments}
           onRemove={removeAttachment}
-          onDisplayInChatBox={displayPasteInChatBox}
+          onDisplayInChatOrgo={displayPasteInChatOrgo}
           allowImages={engineSupportsImages}
           notice={attachmentNotice}
           onNotice={setAttachmentNotice}

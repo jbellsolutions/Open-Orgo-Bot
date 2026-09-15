@@ -7,7 +7,7 @@ import {
   localComputerDisabledReason,
   localComputerSelectable,
   persistedComputerSelectionMatches,
-  resolveBoxPanelAction,
+  resolveOrgoPanelAction,
   shouldPollCloudPreview,
 } from "./local-computer";
 
@@ -115,22 +115,22 @@ describe("local computer UI eligibility", () => {
     ).toBe(false);
   });
 
-  it("reports an inherited team Box without choosing a private Box or local fallback", () => {
+  it("reports an inherited team Orgo without choosing a private Orgo or local fallback", () => {
     for (const configured of [false, true]) {
       for (const boxState of [null, "idle", "archived", "provisioning"]) {
         for (const canUseCloud of [false, true]) {
-          expect(resolveBoxPanelAction({ computer: undefined, configured, boxState, canUseCloud,
-            autoLocal: true, teamComputer: true })).toBe("team-box");
+          expect(resolveOrgoPanelAction({ computer: undefined, configured, boxState, canUseCloud,
+            autoLocal: true, teamComputer: true })).toBe("team-orgo");
         }
       }
     }
-    expect(resolveBoxPanelAction({ computer: "cloud", configured: true, boxState: "idle",
-      canUseCloud: true, autoLocal: true, teamComputer: true })).toBe("ensure-box");
+    expect(resolveOrgoPanelAction({ computer: "cloud", configured: true, boxState: "idle",
+      canUseCloud: true, autoLocal: true, teamComputer: true })).toBe("ensure-orgo");
   });
 
-  it("never creates a missing Box merely because an Auto panel opened", () => {
+  it("never creates a missing Orgo merely because an Auto panel opened", () => {
     expect(
-      resolveBoxPanelAction({
+      resolveOrgoPanelAction({
         computer: undefined,
         configured: true,
         boxState: null,
@@ -139,7 +139,7 @@ describe("local computer UI eligibility", () => {
       }),
     ).toBe("local");
     expect(
-      resolveBoxPanelAction({
+      resolveOrgoPanelAction({
         computer: undefined,
         configured: true,
         boxState: null,
@@ -149,7 +149,7 @@ describe("local computer UI eligibility", () => {
     ).toBe("auto-unavailable");
   });
 
-  it("shows existing Auto Boxes without provisioning or waking them", () => {
+  it("shows existing Auto Orgoes without provisioning or waking them", () => {
     const base = {
       configured: true,
       canUseCloud: true,
@@ -157,55 +157,55 @@ describe("local computer UI eligibility", () => {
       computer: undefined,
     };
     for (const boxState of ["idle", "ready", "running"]) {
-      expect(resolveBoxPanelAction({ ...base, boxState })).toBe("show-ready-box");
+      expect(resolveOrgoPanelAction({ ...base, boxState })).toBe("show-ready-orgo");
     }
     for (const boxState of ["archived", "stopped"]) {
-      expect(resolveBoxPanelAction({ ...base, boxState })).toBe("show-sleeping-box");
+      expect(resolveOrgoPanelAction({ ...base, boxState })).toBe("show-sleeping-orgo");
     }
     for (const boxState of ["provisioning", "creating", "unknown-provider-state"]) {
-      expect(resolveBoxPanelAction({ ...base, boxState })).toBe("show-pending-box");
+      expect(resolveOrgoPanelAction({ ...base, boxState })).toBe("show-pending-orgo");
     }
   });
 
   it("provisions only after an explicit Cloud choice", () => {
-    expect(resolveBoxPanelAction({
+    expect(resolveOrgoPanelAction({
       computer: "cloud",
       configured: true,
       boxState: null,
       canUseCloud: true,
       autoLocal: true,
-    })).toBe("ensure-box");
-    expect(resolveBoxPanelAction({
+    })).toBe("ensure-orgo");
+    expect(resolveOrgoPanelAction({
       computer: "cloud",
       configured: true,
       boxState: "archived",
       canUseCloud: true,
       autoLocal: true,
-    })).toBe("ensure-box");
+    })).toBe("ensure-orgo");
   });
 
-  it("never gives the box-native engine a passive Auto creation exception", () => {
+  it("never gives the orgo-native engine a passive Auto creation exception", () => {
     // Engine kind intentionally is not an input: every engine follows the
     // same read-only Auto rule, including boxAgent.
-    expect(resolveBoxPanelAction({
+    expect(resolveOrgoPanelAction({
       computer: undefined,
       configured: true,
       boxState: null,
       canUseCloud: true,
       autoLocal: false,
     })).toBe("auto-unavailable");
-    expect(resolveBoxPanelAction({
+    expect(resolveOrgoPanelAction({
       computer: undefined,
       configured: true,
       boxState: "archived",
       canUseCloud: true,
       autoLocal: false,
-    })).toBe("show-sleeping-box");
+    })).toBe("show-sleeping-orgo");
   });
 
-  it("falls back locally when the selected engine cannot use an existing Box", () => {
+  it("falls back locally when the selected engine cannot use an existing Orgo", () => {
     expect(
-      resolveBoxPanelAction({
+      resolveOrgoPanelAction({
         computer: undefined,
         configured: true,
         boxState: "running",
@@ -218,12 +218,12 @@ describe("local computer UI eligibility", () => {
   it("refuses cloud preview polling when a stale ready phase belongs to Auto or another destination", () => {
     const ready = {
       computer: "cloud" as const,
-      cloudBackend: "box" as const,
+      cloudBackend: "orgo" as const,
       phase: "ready",
       botId: "bot-a",
       resolvedBotId: "bot-a",
       resolvedComputer: "cloud" as const,
-      resolvedCloudBackend: "box" as const,
+      resolvedCloudBackend: "orgo" as const,
     };
     expect(shouldPollCloudPreview(ready)).toBe(true);
     expect(shouldPollCloudPreview({ ...ready, computer: undefined })).toBe(false);
@@ -237,7 +237,7 @@ describe("local computer UI eligibility", () => {
   });
 
   it("rejects stale persisted selections in both cloud-backend switch directions", () => {
-    const expected = { computer: "cloud" as const, cloudBackend: "box" as const };
+    const expected = { computer: "cloud" as const, cloudBackend: "orgo" as const };
     expect(persistedComputerSelectionMatches({ ...expected, persistedBot: expected })).toBe(true);
     expect(persistedComputerSelectionMatches({
       ...expected,
@@ -246,11 +246,11 @@ describe("local computer UI eligibility", () => {
     expect(persistedComputerSelectionMatches({
       computer: "cloud",
       cloudBackend: "vps",
-      persistedBot: { computer: "cloud", cloudBackend: "box" },
+      persistedBot: { computer: "cloud", cloudBackend: "orgo" },
     })).toBe(false);
     expect(persistedComputerSelectionMatches({
       ...expected,
-      persistedBot: { computer: undefined, cloudBackend: "box" },
+      persistedBot: { computer: undefined, cloudBackend: "orgo" },
     })).toBe(false);
   });
 });

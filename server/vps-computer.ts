@@ -434,14 +434,14 @@ function hasNoPublishedPorts(config: {
 function statusProblem(status: VpsComputerStatus): string | null {
   if (!status.configured) return "Configure a VPS SSH alias in App Settings → Connections";
   if (!status.daemonUp) return "Docker over SSH could not reach the VPS; check the SSH alias and Docker on the VPS";
-  if (!status.image) return `Prepare the pinned OpenMausBot Cua image on the VPS (Driver ${CUA_DRIVER_VERSION})`;
-  if (status.container === "missing") return "No OpenMausBot container exists for this bot on the VPS";
-  if (!status.imageMatches) return "The VPS container uses an incompatible or untrusted OpenMausBot image";
-  if (!status.managed) return "The VPS container name is occupied by a container OpenMausBot did not create";
+  if (!status.image) return `Prepare the pinned Open Orgo Bot Cua image on the VPS (Driver ${CUA_DRIVER_VERSION})`;
+  if (status.container === "missing") return "No Open Orgo Bot container exists for this bot on the VPS";
+  if (!status.imageMatches) return "The VPS container uses an incompatible or untrusted Open Orgo Bot image";
+  if (!status.managed) return "The VPS container name is occupied by a container Open Orgo Bot did not create";
   if (status.network === "unsafe") return "The VPS container uses an unapproved network or publishes ports; refusing to use it";
   if (status.mounts === "unsafe") return "The VPS container has host mounts; refusing to use it";
-  if (status.security === "unsafe") return "The VPS container is missing OpenMausBot safety limits";
-  if (status.container === "stopped") return "The OpenMausBot VPS container is stopped";
+  if (status.security === "unsafe") return "The VPS container is missing Open Orgo Bot safety limits";
+  if (status.container === "stopped") return "The Open Orgo Bot VPS container is stopped";
   if (status.desktop_error) return `The VPS Cua desktop failed to start: ${status.desktop_error}`;
   if (!status.desktopReady) return "The VPS container started, but Cua Driver is not ready yet";
   return null;
@@ -1090,12 +1090,12 @@ export async function vpsComputerAction(
         // IMAGE_LAYER_VERSION bump otherwise bricks the bot: provision 409s
         // on assertUsableContainer forever), so it deliberately skips that
         // check. The ownership labels from the inspect are the only gate:
-        // never docker-rm a container OpenMausBot did not create, even one
+        // never docker-rm a container Open Orgo Bot did not create, even one
         // squatting on our name.
         if (before.container === "missing") return before;
         if (!before.managed) {
           throw Object.assign(
-            new Error("The VPS container name is occupied by a container OpenMausBot did not create — remove it on the VPS yourself"),
+            new Error("The VPS container name is occupied by a container Open Orgo Bot did not create — remove it on the VPS yourself"),
             { status: 409 },
           );
         }
@@ -1244,10 +1244,7 @@ export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: str
   };
 }
 
-export function vpsDriverError(driverKind: string, computerMcp: boolean): string | null {
-  if (driverKind === "boxAgent") {
-    return "The Computer engine runs its agent on Box and cannot use a self-hosted VPS — choose Claude or an ACP engine";
-  }
+export function vpsDriverError(_driverKind: string, computerMcp: boolean): string | null {
   if (!computerMcp) {
     return "This model engine cannot mount a self-hosted VPS computer — choose Claude or an ACP engine";
   }

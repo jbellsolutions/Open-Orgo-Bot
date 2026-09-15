@@ -276,7 +276,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
   const SOURCE = support.nativeSource;
   const decodeConfig = decodeAcpConfig(support.defaultCli);
   const DENY_TIMEOUT_NOTE =
-    "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+    "Open Orgo Bot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
   return {
     driverKind: DRIVER_KIND,
@@ -300,7 +300,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
         const allowedCredentials = new Set(support.credentialEnv ?? []);
         // two lists, one rule: foreign PROVIDER keys must not flip a CLI's
-        // billing off its own login, and WORKSPACE credentials (box token,
+        // billing off its own login, and WORKSPACE credentials (Orgo key,
         // voice key, …) are the harness's secrets — riding along in
         // `...process.env` is not a grant. A driver keeps only what its
         // credentialEnv allowlist names.
@@ -413,7 +413,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(browser.env) });
         }
         // The bot's computer, mounted exactly like the Claude driver does.
-        // Cloud boxes use the REST adapter; host and sandbox Cua connections
+        // Orgo computers use the REST adapter; host and sandbox Cua connections
         // expose Cua Driver's official MCP server directly.
         const computer = turn.integrations?.computer;
         if (computer) {
@@ -1093,7 +1093,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             images: support.images !== false,
             nativeImageInput: support.images === true,
             effortLevels: support.effortLevels,
-            // OpenMausBot supplies a per-bot approvalMode on every harness
+            // Open Orgo Bot supplies a per-bot approvalMode on every harness
             // turn, which safely overrides a legacy instance fullAuto value.
             // Direct adapter calls that omit it still fail closed in sendTurn.
             localComputerMcp: true,

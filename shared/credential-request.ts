@@ -10,11 +10,11 @@ export const CREDENTIAL_TARGETS = {
     placeholder: "xai-…",
     helpUrl: "https://console.x.ai/",
   },
-  boxToken: {
-    label: "Box API key",
-    description: "Gives bots an isolated cloud computer when Box is selected.",
-    placeholder: "Paste your Box API key",
-    helpUrl: "https://docs.ascii.dev/box/api-keys",
+  orgoApiKey: {
+    label: "Orgo API key",
+    description: "Gives bots an isolated cloud computer when Orgo is selected.",
+    placeholder: "Paste your Orgo API key",
+    helpUrl: "https://www.orgo.ai/workspaces",
   },
   opencodeGoApiKey: {
     label: "OpenCode API key",
@@ -39,7 +39,7 @@ export const CREDENTIAL_TARGETS = {
 export type CredentialTargetId = keyof typeof CREDENTIAL_TARGETS;
 export type CredentialConfig = {
   xai?: { key?: string };
-  box?: { token?: string };
+  orgo?: { apiKey?: string };
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string };
   imageGen?: { key?: string };
@@ -53,8 +53,8 @@ export function credentialConfigPatch(id: CredentialTargetId, value: string): Cr
   switch (id) {
     case "xaiApiKey":
       return { xai: { key: value } };
-    case "boxToken":
-      return { box: { token: value } };
+    case "orgoApiKey":
+      return { orgo: { apiKey: value } };
     case "opencodeGoApiKey":
       return { opencodeGo: { apiKey: value } };
     case "ttsKey":
@@ -68,8 +68,8 @@ export function credentialIsConfigured(config: CredentialConfig, id: CredentialT
   switch (id) {
     case "xaiApiKey":
       return Boolean(config.xai?.key);
-    case "boxToken":
-      return Boolean(config.box?.token);
+    case "orgoApiKey":
+      return Boolean(config.orgo?.apiKey);
     case "opencodeGoApiKey":
       return Boolean(config.opencodeGo?.apiKey);
     case "ttsKey":

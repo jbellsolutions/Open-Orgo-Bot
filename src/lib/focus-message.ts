@@ -1,5 +1,5 @@
 // Landing on a message: after a search hit, scroll the row into view and
-// flash it. Rows are wrapped in `display: contents` (no box of their own),
+// flash it. Rows are wrapped in `display: contents` (no orgo of their own),
 // so the wrapper carries data-mid and its last child — the bubble/chip,
 // after any day separator — is what gets scrolled and highlighted.
 import { useEffect } from "react";

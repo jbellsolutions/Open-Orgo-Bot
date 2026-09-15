@@ -102,7 +102,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.FAKE_CODEX_ASTRA;
     delete process.env.FAKE_CODEX_INSTRUCTIONS;
     delete process.env.OPENAI_API_KEY;
-    delete process.env.BOX_TOKEN;
+    delete process.env.ORGO_API_KEY;
     delete process.env.OMB_TTS_KEY;
     recorder?.stop();
     await instance?.dispose();
@@ -139,7 +139,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.OPENAI_API_KEY = "sk-should-not-leak";
     // workspace credentials the harness may hold (env-injected at boot by
     // the desktop shell) must never ride into the CLI child
-    process.env.BOX_TOKEN = "box-should-not-leak";
+    process.env.ORGO_API_KEY = "orgo-should-not-leak";
     process.env.OMB_TTS_KEY = "tts-should-not-leak";
 
     const { turnId } = await instance.adapter.sendTurn({
@@ -155,7 +155,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       "turn.started",
       "session.started",
       "item.started", // commandExecution ls -la
-      "item.started", // webSearch OpenMausBot
+      "item.started", // webSearch Open Orgo Bot
       "item.completed", // commandExecution done
       "item.completed", // webSearch done
       "content.delta",
@@ -191,7 +191,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(processIsAlive(seen.pid)).toBe(false);
     expect(seen.env.OPENAI_API_KEY).toBeUndefined();
-    expect(seen.env.BOX_TOKEN).toBeUndefined();
+    expect(seen.env.ORGO_API_KEY).toBeUndefined();
     expect(seen.env.OMB_TTS_KEY).toBeUndefined();
     const methods = seen.calls.map((c: { method: string }) => c.method);
     expect(methods).toEqual(["initialize", "initialized", "config/read", "thread/start", "turn/start"]);
@@ -701,7 +701,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       threadId: "t-remote-computer",
       text: "take a screenshot",
       integrations: {
-        computer: { boxId: "box-123", token: "remote-secret" },
+        computer: { computerId: "orgo-123", apiKey: "remote-secret" },
       },
     });
     await recorder.until((event) => event.type === "turn.completed");
@@ -709,10 +709,10 @@ describe("CodexDriver turns (fake app-server)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv.join(" ")).toContain("mcp_servers.computer.command");
     expect(seen.argv.join(" ")).toContain("computer-proxy");
-    expect(seen.argv.join(" ")).toContain("OGB_BOX_TOKEN");
+    expect(seen.argv.join(" ")).toContain("OOB_ORGO_API_KEY");
     expect(seen.argv.join(" ")).not.toContain("remote-secret");
-    expect(seen.env.OGB_BOX_ID).toBe("box-123");
-    expect(seen.env.OGB_BOX_TOKEN).toBe("remote-secret");
+    expect(seen.env.OOB_ORGO_COMPUTER_ID).toBe("orgo-123");
+    expect(seen.env.OOB_ORGO_API_KEY).toBe("remote-secret");
   });
 
   it("sends the local provider when the picker id is custom-encoded", async () => {
@@ -839,7 +839,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       if (index > 0) expect(threadCalls[0].method).toBe("thread/resume");
       const updates = calls.filter((call) => call.method === "thread/inject_items");
       expect(updates).toHaveLength(index === 2 || index === 3 ? 1 : 0);
-      if (updates.length) expect(JSON.stringify(updates[0].params)).toContain(system || "No OpenMausBot bot-specific instructions remain.");
+      if (updates.length) expect(JSON.stringify(updates[0].params)).toContain(system || "No Open Orgo Bot bot-specific instructions remain.");
       for (const call of calls.filter((call) => call.method === "turn/start")) {
         expect(call.params.input).toEqual([{ type: "text", text: `message-${index}` }]);
       }
@@ -861,7 +861,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       await expect(recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId)).resolves.toMatchObject({ ok: true });
       const calls = JSON.parse(readFileSync(dump, "utf8")).calls;
       const threadCall = calls.find((call: { method: string }) => call.method === (index ? "thread/resume" : "thread/start"));
-      expect(threadCall.params.developerInstructions).toBe(`${system || "No OpenMausBot bot-specific instructions remain."}\n\nPrivate native rules.`);
+      expect(threadCall.params.developerInstructions).toBe(`${system || "No Open Orgo Bot bot-specific instructions remain."}\n\nPrivate native rules.`);
       expect(calls.filter((call: { method: string }) => call.method === "thread/inject_items")).toHaveLength(index === 1 ? 1 : 0);
       expect(calls.find((call: { method: string }) => call.method === "turn/start").params.input).toEqual([{ type: "text", text: `message-${index}` }]);
     }

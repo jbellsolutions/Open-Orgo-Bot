@@ -430,7 +430,7 @@ describe("bidi: message content carries its own direction", () => {
     expect(html).toContain('<p dir="rtl">');
   });
 
-  it("uses logical box properties so indents and rules follow the text", () => {
+  it("uses logical orgo properties so indents and rules follow the text", () => {
     const html = renderToStaticMarkup(createElement(ChatMarkdown, {
       text: `- ${ARABIC}\n\n1. ${ARABIC}\n\n> ${ARABIC}\n\n| a |\n| --- |\n| b |`,
     }));

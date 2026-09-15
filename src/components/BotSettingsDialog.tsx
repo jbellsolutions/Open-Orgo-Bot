@@ -198,7 +198,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
       // review, the model picker's popover, a computer warning) owns Escape
       // while it is up: Escape closes only that layer.
       // Only a *visible* nested dialog owns Escape. A hidden or
-      // zero-size leftover (display:none, empty hit box) must not trap
+      // zero-size leftover (display:none, empty hit orgo) must not trap
       // the settings panel's own dismiss path.
       const nested = dialog?.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]');
       if (nested && nested.getClientRects().length > 0) return;

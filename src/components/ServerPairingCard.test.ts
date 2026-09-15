@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { canPairDevices, lastSeen, minutesLeft, ServerPairingCard } from "./ServerPairingCard";
 
 describe("pairing devices from a hosted server's settings", () => {
-  it("is offered to the owner on the box and to admin sessions, never to chat-only sessions", () => {
+  it("is offered to the owner on the orgo and to admin sessions, never to chat-only sessions", () => {
     expect(canPairDevices({ kind: "loopback" })).toBe(true);
     expect(canPairDevices({ kind: "session", id: "s", label: "Her iPad", scopes: ["admin", "client"], expiresAt: 1 })).toBe(true);
     expect(canPairDevices({ kind: "session", id: "s", label: "Staff phone", scopes: ["client"], expiresAt: 1 })).toBe(false);

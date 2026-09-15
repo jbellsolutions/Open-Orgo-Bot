@@ -30,6 +30,8 @@ export function selectDefaultModelSelection(
     return selection;
   }
   const available = instances.filter((instance) => instance.snapshot.state === "available");
-  const pick = available.find((instance) => instance.driverKind === "claudeAgent") ?? available[0];
+  const pick = available.find((instance) => instance.driverKind === "hermesAgent")
+    ?? available.find((instance) => instance.driverKind === "claudeAgent")
+    ?? available[0];
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }

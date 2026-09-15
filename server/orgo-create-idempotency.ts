@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 
-const FILE = join(DATA_DIR, "box-create-requests.json");
-const LOCK_FILE = join(DATA_DIR, "box-create-requests.lock");
+const FILE = join(DATA_DIR, "orgo-create-requests.json");
+const LOCK_FILE = join(DATA_DIR, "orgo-create-requests.lock");
 const KEY_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const MAX_REQUESTS = 4_096;
 const LOCK_WAIT_MS = 2_000;
@@ -14,30 +14,30 @@ const LOCK_RETRY_MS = 20;
 const MAX_REAPER_GENERATIONS = 128;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const BOT_ID = /^[A-Za-z0-9_-]{1,120}$/;
-const BOX_ID = /^bx_[23456789abcdefghjkmnpqrstuvwxyz]{8}$/;
+const ORGO_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export interface BoxCreateRequest {
+export interface OrgoCreateRequest {
   botId: string;
   requestBody: string;
   idempotencyKey: string;
   createdAt: number;
-  boxId?: string;
-  /** The provider Box has its deterministic OpenMaus name. Until this is
-   * true, deleting the bot would make an ambiguous or unnamed Box orphaned. */
+  computerId?: string;
+  /** The provider Orgo has its deterministic Open Orgo Bot name. Until this is
+   * true, deleting the bot would make an ambiguous or unnamed Orgo orphaned. */
   resolved?: true;
 }
 
-export interface BoxCreateAttempt {
-  request: BoxCreateRequest;
+export interface OrgoCreateAttempt {
+  request: OrgoCreateRequest;
   /** True only when this call wrote a brand-new provider key. This is
-   * deliberately process-local provenance: a resumed key may resolve a Box
+   * deliberately process-local provenance: a resumed key may resolve a Orgo
    * created by an earlier app run and must never authorize automatic cleanup. */
   startedNow: boolean;
 }
 
-export interface BoxCreateRecoverySnapshot {
+export interface OrgoCreateRecoverySnapshot {
   botId: string;
-  boxId?: string;
+  computerId?: string;
   resolved: boolean;
 }
 
@@ -59,7 +59,7 @@ interface LegacyJournalReaperOwner {
 
 const lockWait = new Int32Array(new SharedArrayBuffer(4));
 
-function isRequest(value: unknown): value is BoxCreateRequest {
+function isRequest(value: unknown): value is OrgoCreateRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const request = value as Record<string, unknown>;
   return (
@@ -73,8 +73,8 @@ function isRequest(value: unknown): value is BoxCreateRequest {
     && typeof request.createdAt === "number"
     && Number.isFinite(request.createdAt)
     && request.createdAt > 0
-    && (request.boxId === undefined || (typeof request.boxId === "string" && BOX_ID.test(request.boxId)))
-    && (request.resolved === undefined || (request.resolved === true && typeof request.boxId === "string"))
+    && (request.computerId === undefined || (typeof request.computerId === "string" && ORGO_ID.test(request.computerId)))
+    && (request.resolved === undefined || (request.resolved === true && typeof request.computerId === "string"))
   );
 }
 
@@ -82,13 +82,13 @@ function recoveryStateError(detail: string, cause?: unknown): Error & { status: 
   return Object.assign(
     new Error(
       `Cloud computer creation is paused because its recovery state is ${detail}. `
-      + "Check ascii.dev for an unnamed Box before repairing OpenMausBot's local state.",
+      + "Check Orgo for a matching computer before repairing Open Orgo Bot's local state.",
     ),
     { status: 503, cause },
   );
 }
 
-function loadFresh(): BoxCreateRequest[] {
+function loadFresh(): OrgoCreateRequest[] {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(FILE, "utf8"));
@@ -110,19 +110,19 @@ function loadFresh(): BoxCreateRequest[] {
   }
   const identities = new Set<string>();
   const keys = new Set<string>();
-  const botsWithKnownBoxes = new Set<string>();
+  const botsWithKnownComputers = new Set<string>();
   for (const request of file.requests) {
     const identity = `${request.botId}\0${request.requestBody}`;
     if (identities.has(identity) || keys.has(request.idempotencyKey)) throw recoveryStateError("invalid");
-    if (request.boxId && botsWithKnownBoxes.has(request.botId)) throw recoveryStateError("invalid");
+    if (request.computerId && botsWithKnownComputers.has(request.botId)) throw recoveryStateError("invalid");
     identities.add(identity);
     keys.add(request.idempotencyKey);
-    if (request.boxId) botsWithKnownBoxes.add(request.botId);
+    if (request.computerId) botsWithKnownComputers.add(request.botId);
   }
   return file.requests.map((request) => ({ ...request }));
 }
 
-function save(next: BoxCreateRequest[]): void {
+function save(next: OrgoCreateRequest[]): void {
   mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
   try {
     writeFileAtomic(FILE, `${JSON.stringify({ version: 1, requests: next }, null, 2)}\n`, { mode: 0o600 });
@@ -324,7 +324,7 @@ function acquireJournalLock(): JournalLockOwner {
       // lock can disappear between link(EEXIST) and read, or replace each
       // successfully reaped owner before the next link attempt.
       if (performance.now() >= deadline) {
-        throw recoveryStateError("locked by another OpenMausBot process");
+        throw recoveryStateError("locked by another Open Orgo Bot process");
       }
       if (reaped) continue;
       Atomics.wait(lockWait, 0, 0, LOCK_RETRY_MS);
@@ -346,7 +346,7 @@ function releaseJournalLock(owner: JournalLockOwner): void {
   }
 }
 
-function withJournalLock<T>(operation: (requests: BoxCreateRequest[]) => T): T {
+function withJournalLock<T>(operation: (requests: OrgoCreateRequest[]) => T): T {
   const owner = acquireJournalLock();
   try {
     return operation(loadFresh());
@@ -356,13 +356,13 @@ function withJournalLock<T>(operation: (requests: BoxCreateRequest[]) => T): T {
 }
 
 /** Record the exact provider request before it leaves the process. A known
- * Box wins over a changed body: once a provider resource exists, recovering
+ * Orgo wins over a changed body: once a provider resource exists, recovering
  * and naming it is safer than issuing any second create request. */
-export function beginBoxCreate(botId: string, requestBody: string): BoxCreateAttempt {
+export function beginOrgoCreate(botId: string, requestBody: string): OrgoCreateAttempt {
   if (!BOT_ID.test(botId)) throw new Error("invalid bot id for cloud computer creation");
   if (!requestBody || requestBody.length > 1_024) throw new Error("invalid cloud computer create request");
   return withJournalLock((requests) => {
-    const known = requests.find((request) => request.botId === botId && request.boxId);
+    const known = requests.find((request) => request.botId === botId && request.computerId);
     if (known) return { request: { ...known }, startedNow: false };
 
     const now = Date.now();
@@ -373,14 +373,14 @@ export function beginBoxCreate(botId: string, requestBody: string): BoxCreateAtt
       }
       if (now - pending.createdAt >= KEY_RETENTION_MS) {
         // Once the provider forgets the idempotency key, retrying it (or using
-        // a new key) may create a second billable Box. Absence cannot be
+        // a new key) may create a second billable Orgo. Absence cannot be
         // inferred from a lost response, so stop for manual reconciliation.
-        throw recoveryStateError("older than ascii.dev's 24-hour retry window");
+        throw recoveryStateError("awaiting manual Orgo reconciliation");
       }
       return { request: { ...pending }, startedNow: false };
     }
 
-    const request: BoxCreateRequest = {
+    const request: OrgoCreateRequest = {
       botId,
       requestBody,
       idempotencyKey: randomUUID(),
@@ -393,19 +393,19 @@ export function beginBoxCreate(botId: string, requestBody: string): BoxCreateAtt
 }
 
 /** Persist the returned identity before the caller attempts to rename it. */
-export function rememberCreatedBox(request: BoxCreateRequest, boxId: string): BoxCreateRequest {
-  if (!BOX_ID.test(boxId)) throw new Error("ascii.dev returned an invalid cloud computer id");
+export function rememberCreatedOrgo(request: OrgoCreateRequest, computerId: string): OrgoCreateRequest {
+  if (!ORGO_ID.test(computerId)) throw new Error("Orgo returned an invalid cloud computer id");
   return withJournalLock((requests) => {
     const current = requests.find((candidate) => (
       candidate.botId === request.botId
       && candidate.requestBody === request.requestBody
       && candidate.idempotencyKey === request.idempotencyKey
     ));
-    if (!current || (current.boxId !== undefined && current.boxId !== boxId)) {
+    if (!current || (current.computerId !== undefined && current.computerId !== computerId)) {
       throw recoveryStateError("out of date");
     }
-    const completed = { ...current, boxId };
-    // There can be an older rejected-TTL request for this bot. Once a Box is
+    const completed = { ...current, computerId };
+    // There can be an older rejected-TTL request for this bot. Once a Orgo is
     // known, it is the only recovery authority we need to retain.
     save([...requests.filter((candidate) => candidate.botId !== request.botId), completed]);
     return { ...completed };
@@ -413,26 +413,26 @@ export function rememberCreatedBox(request: BoxCreateRequest, boxId: string): Bo
 }
 
 /** Mark the recovery record safe only after the deterministic provider rename
- * succeeds. Keeping the resolved Box ID still lets a later retry recover from
+ * succeeds. Keeping the resolved Orgo ID still lets a later retry recover from
  * an eventually-consistent account listing without blocking bot deletion. */
-export function resolveBoxCreate(request: BoxCreateRequest): BoxCreateRequest {
+export function resolveOrgoCreate(request: OrgoCreateRequest): OrgoCreateRequest {
   return withJournalLock((requests) => {
     const current = requests.find((candidate) => (
       candidate.botId === request.botId
       && candidate.requestBody === request.requestBody
       && candidate.idempotencyKey === request.idempotencyKey
-      && candidate.boxId === request.boxId
+      && candidate.computerId === request.computerId
     ));
-    if (!current?.boxId) throw recoveryStateError("out of date");
-    const resolved: BoxCreateRequest = { ...current, resolved: true };
+    if (!current?.computerId) throw recoveryStateError("out of date");
+    const resolved: OrgoCreateRequest = { ...current, resolved: true };
     save(requests.map((candidate) => candidate.idempotencyKey === current.idempotencyKey ? resolved : candidate));
     return { ...resolved };
   });
 }
 
 /** Read-only deletion guard. Both a key-only request with an ambiguous
- * provider outcome and a known-but-not-yet-named Box must keep its bot owner. */
-export function hasUnresolvedBoxCreate(botId: string): boolean {
+ * provider outcome and a known-but-not-yet-named Orgo must keep its bot owner. */
+export function hasUnresolvedOrgoCreate(botId: string): boolean {
   if (!BOT_ID.test(botId)) throw new Error("invalid bot id for cloud computer creation");
   return withJournalLock((requests) => (
     requests.some((request) => request.botId === botId && request.resolved !== true)
@@ -443,62 +443,62 @@ export function hasUnresolvedBoxCreate(botId: string): boolean {
  * lock-protected read can prove a remembered provider id even while the
  * account-wide LIST endpoint is eventually consistent. Provider request
  * bodies and idempotency keys never cross this boundary. */
-export function boxCreateRecoverySnapshot(): BoxCreateRecoverySnapshot[] {
+export function orgoCreateRecoverySnapshot(): OrgoCreateRecoverySnapshot[] {
   return withJournalLock((requests) => requests.map((request) => ({
     botId: request.botId,
-    ...(request.boxId ? { boxId: request.boxId } : {}),
+    ...(request.computerId ? { computerId: request.computerId } : {}),
     resolved: request.resolved === true,
   })));
 }
 
-/** Persist ownership discovered from a pre-journal deterministic Box name.
+/** Persist ownership discovered from a pre-journal deterministic Orgo name.
  * The provider listing proves which live bot owns the exact immutable id, but
  * it must never steal an identity remembered for another bot. It supersedes
  * stale attempts for the same bot, is idempotent, and fails closed on a true
  * cross-bot conflict. */
-export function adoptResolvedBox(botId: string, boxId: string): void {
+export function adoptResolvedOrgo(botId: string, computerId: string): void {
   if (!BOT_ID.test(botId)) throw new Error("invalid bot id for cloud computer ownership");
-  if (!BOX_ID.test(boxId)) throw new Error("invalid cloud computer id for ownership");
+  if (!ORGO_ID.test(computerId)) throw new Error("invalid cloud computer id for ownership");
   withJournalLock((requests) => {
-    const sameBox = requests.find((request) => request.boxId === boxId);
-    if (sameBox && sameBox.botId !== botId) {
+    const sameOrgo = requests.find((request) => request.computerId === computerId);
+    if (sameOrgo && sameOrgo.botId !== botId) {
       throw recoveryStateError("conflicted with another bot's remembered cloud computer");
     }
-    const adopted: BoxCreateRequest = sameBox
-      ? { ...sameBox, resolved: true }
+    const adopted: OrgoCreateRequest = sameOrgo
+      ? { ...sameOrgo, resolved: true }
       : {
           botId,
-          requestBody: JSON.stringify({ adopted: "legacy-name", boxId }),
+          requestBody: JSON.stringify({ adopted: "legacy-name", computerId }),
           idempotencyKey: randomUUID(),
           createdAt: Date.now(),
-          boxId,
+          computerId,
           resolved: true,
         };
     const retained = requests.filter((request) => request.botId !== botId);
     if (retained.length >= MAX_REQUESTS) throw recoveryStateError("full");
     if (
       requests.filter((request) => request.botId === botId).length === 1
-      && sameBox?.resolved === true
-      && sameBox.botId === botId
+      && sameOrgo?.resolved === true
+      && sameOrgo.botId === botId
     ) return;
     // A successfully listed deterministic legacy name resolves any older
     // key-only/remembered attempt for this bot. Keeping those stale rows would
-    // leave deletion permanently blocked after the adopted Box is removed.
+    // leave deletion permanently blocked after the adopted Orgo is removed.
     save([...retained, adopted]);
   });
 }
 
-/** Retire only the durable identity for a Box the provider has confirmed was
+/** Retire only the durable identity for a Orgo the provider has confirmed was
  * deleted. Callers must never use this for a failed or ambiguous deletion. */
-export function retireDeletedBoxCreate(boxId: string): void {
-  if (!BOX_ID.test(boxId)) throw new Error("invalid deleted cloud computer id");
+export function retireDeletedOrgoCreate(computerId: string): void {
+  if (!ORGO_ID.test(computerId)) throw new Error("invalid deleted cloud computer id");
   withJournalLock((requests) => {
-    const next = requests.filter((request) => request.boxId !== boxId);
+    const next = requests.filter((request) => request.computerId !== computerId);
     if (next.length !== requests.length) save(next);
   });
 }
 
-export function discardBoxCreate(request: BoxCreateRequest): void {
+export function discardOrgoCreate(request: OrgoCreateRequest): void {
   withJournalLock((requests) => {
     const next = requests.filter((candidate) => candidate.idempotencyKey !== request.idempotencyKey);
     if (next.length !== requests.length) save(next);

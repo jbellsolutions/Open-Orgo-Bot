@@ -730,8 +730,8 @@ const MessagesList = memo(function MessagesList({
             case "connector":
               return m.connector ? <ConnectorCard botId={bot.id} threadId={bot.threadId} message={m} /> : null;
             case "options":
-              // a live permission ask gets the approval box; a structured
-              // ask gets the question box; anything else keeps the list
+              // a live permission ask gets the approval orgo; a structured
+              // ask gets the question orgo; anything else keeps the list
               // card. The first-run quiz drops out once they talk.
               if (m.card?.requestId && m.card.questionRequest) {
                 return <QuestionCard threadId={bot.threadId} bot={bot} message={m} />;
@@ -1291,7 +1291,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
         className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 [overflow-anchor:none]"
         onPointerDown={(e) => {
           // grabbing the scrollbar is a scroll gesture too — the lane lives
-          // past the content box (clientWidth excludes it)
+          // past the content orgo (clientWidth excludes it)
           const el = scrollRef.current;
           if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
         }}

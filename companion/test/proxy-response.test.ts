@@ -105,7 +105,7 @@ describe("preparing a harness response for a device", () => {
       for (const action of ["join", "screenshot"]) {
         const { status, text } = await device(`/api/bots/b1/computer/${action}`, "POST");
         expect(status).toBe(403);
-        expect(text).toContain("enable it in OpenMausBot");
+        expect(text).toContain("enable it in Open Orgo Bot");
         expect(text).toContain("Settings → Remote access");
       }
     } finally {

@@ -7,14 +7,14 @@
 //      shell command over computer_exec or a status read does not count,
 //      however the driver happens to spell the tool's name;
 //   2. is the end frame different from the one the transcript already
-//      shows — a boxAgent turn starts as screen work by definition, so this
+//      shows — a cloud-computer turn starts as screen work by definition, so this
 //      is what keeps its shell-only replies from re-picturing the same idle
 //      desktop.
 import { createHash } from "node:crypto";
 
 /** Tools that change or show the screen, by their bare MCP names. One list
  * for every computer surface, because the poke site only has the name: the
- * cloud box and remote computers (server/computer-proxy.ts), the built-in
+ * Orgo and remote computers (server/computer-proxy.ts), the built-in
  * browser (server/drivers/browser-proxy.ts) and Cua Driver's own surface
  * for the local Mac, Local VM and VPS (docs/computer-use-integration.md).
  *
@@ -28,7 +28,7 @@ import { createHash } from "node:crypto";
  * during those was the person's doing, and captures are withheld under
  * their lease anyway). */
 const SCREEN_TOUCHING_TOOLS = new Set([
-  // cloud box / remote computer
+  // Orgo / remote computer
   "screenshot",
   "click",
   "type_text",

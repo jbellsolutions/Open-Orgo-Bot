@@ -37,7 +37,7 @@ function Receipt({ name, running, tone }: { name: string; running: boolean; tone
   return (
     <div
       className={cn(
-        "animate-rise flex w-[232px] items-center gap-2.5 rounded-2xl border bg-card px-3 py-2.5 transition-[border-color,box-shadow] duration-500",
+        "animate-rise flex w-[232px] items-center gap-2.5 rounded-2xl border bg-card px-3 py-2.5 transition-[border-color,orgo-shadow] duration-500",
         running
           ? "border-hairline/50 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]"
           : "border-success/35 shadow-[0_14px_36px_-14px_rgba(56,213,145,0.35)]",
@@ -146,7 +146,7 @@ export function Automations({ playing, onCue, onEnded, label }: SceneProps) {
                   <div
                     className={cn(
                       "absolute inset-x-1 flex items-center gap-1.5 overflow-hidden rounded-md border-l-2 border-accent bg-accent/15 px-1.5 py-1",
-                      "transition-[transform,opacity,box-shadow] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                      "transition-[transform,opacity,orgo-shadow] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
                       dropped ? "translate-y-0 scale-100 opacity-100 shadow-[0_2px_6px_-2px_rgba(0,0,0,0.4)]" : "-translate-y-3 scale-[0.98] opacity-0 shadow-[0_18px_28px_-10px_rgba(0,0,0,0.6)]",
                       busy && firing && !done && "animate-ripple",
                       hook && !hookDone && "animate-ripple",

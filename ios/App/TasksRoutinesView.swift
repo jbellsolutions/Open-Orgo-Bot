@@ -277,9 +277,9 @@ private struct RoutineEditorView: View {
                     if runOn == .maus {
                         Text("Uses this agent's selected model and computer setting on the paired computer.")
                     } else if runAvailability?.cloudReady == true {
-                        Text("Runs the agent and its tools inside its Box virtual machine. The VM wakes automatically for each run; keep OpenMausBot running so its scheduler can launch the job.")
+                        Text("Runs the agent with its assigned Orgo computer. The computer starts automatically for each run; keep Open Orgo Bot running so its scheduler can launch the job.")
                     } else {
-                        Text("This existing Cloud VM choice is preserved, but it cannot run until the paired computer has a configured Box API key and an available Box agent.")
+                        Text("This existing Cloud VM choice is preserved, but it cannot run until the paired computer has a configured Orgo API key and an available cloud-capable agent.")
                     }
                 }
 

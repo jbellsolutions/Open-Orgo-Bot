@@ -332,6 +332,8 @@ export function companionPairingLink({
     return null;
   const dialableHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
+  // The existing iOS and Android companions own this compatibility scheme.
+  // The Electron package-install scheme is separately branded openorgobot://.
   const url = new URL("openmausbot://pair");
   url.searchParams.set("address", `${dialableHost}:${port}`);
   // The scanner uses the high-entropy token. The code remains in the link so

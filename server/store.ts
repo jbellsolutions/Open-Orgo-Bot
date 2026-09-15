@@ -134,7 +134,7 @@ export interface Message {
   kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
   text?: string;
   /** Durable provider output stored by the harness. Paths always point into
-   * OpenMausBot's private attachment directory; renderers receive only the
+   * Open Orgo Bot's private attachment directory; renderers receive only the
    * existing allowlisted /api/attachments URL. */
   attachments?: Array<{ kind: "image"; path: string; mime: string }>;
   card?: OptionCardData;
@@ -635,11 +635,11 @@ export interface BotRecord {
   modelSelection: ModelSelection;
   /** provider-native continuation per instance (e.g. claude session id) */
   resumeCursors: Record<string, unknown>;
-  /** where the bot works ("Works on"): its cloud box, the Local VM, this
+  /** where the bot works ("Works on"): its cloud computer, the Local VM, this
    * computer (local CUA), only the built-in browser tab, or nowhere.
-   * Unset = auto (box when it exists, else local when available). */
+   * Unset = auto (cloud when it exists, else local when available). */
   computer?: "cloud" | "vm" | "local" | "browser" | "off";
-  /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
+  /** Which cloud computer backs `computer: "cloud"`; absent means Orgo. */
   cloudBackend?: CloudBackend;
   /** Auto mode may prepare/start this bot's managed VPS container. Off by
    * default because starting remote infrastructure is an external action. */
@@ -913,7 +913,10 @@ export class Store {
           botsMigrated = true;
         }
       }
-      if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
+      if ((b.cloudBackend as string | undefined) === "box") {
+        b.cloudBackend = "orgo";
+        botsMigrated = true;
+      } else if (b.cloudBackend !== undefined && b.cloudBackend !== "orgo" && b.cloudBackend !== "vps") {
         delete b.cloudBackend;
         botsMigrated = true;
       }
@@ -1297,7 +1300,7 @@ export class Store {
       detail: string;
       finishedAt: number;
     } | null,
-    fallbackDetail = "OpenMausBot restarted before this goal finished.",
+    fallbackDetail = "Open Orgo Bot restarted before this goal finished.",
     fallbackFinishedAt = Date.now(),
   ): number {
     const ownedThreadIds = new Set<string>();

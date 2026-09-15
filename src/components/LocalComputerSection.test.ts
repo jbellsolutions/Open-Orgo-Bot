@@ -35,7 +35,7 @@ const cloudVm: LocalVmInventoryInstance = {
 };
 
 const ownedCloudComputer: CloudComputerInventoryInstance = {
-  boxId: "provider-id-must-not-render",
+  computerId: "provider-id-must-not-render",
   name: "ogb-current0-a1b2c3",
   state: "ready",
   ownerBotId: "current-owner",
@@ -52,7 +52,7 @@ describe("computer inventory request wiring", () => {
     const requests = ([
       ["status", "/api/local-computer"],
       ["local-vms", "/api/local-computer/instances"],
-      ["cloud", "/api/computers/boxes"],
+      ["cloud", "/api/computers/orgo"],
       ["vps", "/api/computers/vps"],
     ] as const).map(([kind, expectedUrl]) => ({
       expectedUrl,
@@ -78,7 +78,7 @@ describe("computer inventory request wiring", () => {
     );
   });
 
-  it("builds the exact confirmed Local VM, Box, and VPS lifecycle requests", () => {
+  it("builds the exact confirmed Local VM, Orgo, and VPS lifecycle requests", () => {
     const confirm = vi.fn(() => true);
     const local = confirmComputerAction(perBotLocalVmDeletePlan(cloudVm), confirm);
     const cloudDelete = confirmComputerAction(cloudComputerActionPlan("delete", ownedCloudComputer), confirm);
@@ -102,7 +102,7 @@ describe("computer inventory request wiring", () => {
       },
     ]);
     expect(cloudDelete).toEqual([
-      "/api/computers/boxes/provider-id-must-not-render/delete",
+      "/api/computers/orgo/provider-id-must-not-render/delete",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -110,7 +110,7 @@ describe("computer inventory request wiring", () => {
       },
     ]);
     expect(cloudSleep).toEqual([
-      "/api/computers/boxes/provider-id-must-not-render/sleep",
+      "/api/computers/orgo/provider-id-must-not-render/sleep",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -223,7 +223,7 @@ describe("Local VM inventory UI", () => {
     }));
 
     expect(markup).toContain("Not managed");
-    expect(markup).toContain("not managed by OpenMausBot");
+    expect(markup).toContain("not managed by Open Orgo Bot");
     expect(markup).toContain("remove it directly in Docker or Podman");
     expect(markup).not.toContain(">Delete</button>");
     expect(markup).not.toContain("Container labels do not match");
@@ -250,7 +250,7 @@ describe("cloud computer inventory UI", () => {
       instances: [
         ownedCloudComputer,
         {
-          boxId: "another-provider-id",
+          computerId: "another-provider-id",
           name: "ogb-orphaned-abcdef",
           state: "archived",
           ownerBotId: null,
@@ -288,19 +288,19 @@ describe("cloud computer inventory UI", () => {
 
   it("keeps disconnected, unavailable, and empty states distinct", () => {
     const disconnected = renderCard({ configured: false });
-    expect(disconnected).toContain("Box is not connected");
-    expect(disconnected).not.toContain("No OpenMaus-managed cloud computers found");
+    expect(disconnected).toContain("Orgo is not connected");
+    expect(disconnected).not.toContain("No Open Orgo Bot-managed cloud computers found");
 
     const unavailable = renderCard({ unavailableReason: "ascii.dev is unavailable" });
     expect(unavailable).toContain("ascii.dev is unavailable");
-    expect(unavailable).not.toContain("No OpenMaus-managed cloud computers found");
+    expect(unavailable).not.toContain("No Open Orgo Bot-managed cloud computers found");
 
     const endpointFailure = renderCard({ configured: null, unavailableReason: "Computer inventory could not load" });
     expect(endpointFailure).toContain("Computer inventory could not load");
-    expect(endpointFailure).not.toContain("Box is not connected");
+    expect(endpointFailure).not.toContain("Orgo is not connected");
 
     const empty = renderCard();
-    expect(empty).toContain("No OpenMaus-managed cloud computers found");
+    expect(empty).toContain("No Open Orgo Bot-managed cloud computers found");
   });
 
   it("uses honest state labels", () => {
@@ -334,10 +334,10 @@ describe("cloud computer inventory UI", () => {
     const first = reconcileCloudInventorySnapshot(
       [ownedCloudComputer],
       [ownedCloudComputer],
-      { [ownedCloudComputer.boxId]: "deleted" },
+      { [ownedCloudComputer.computerId]: "deleted" },
     );
     expect(first.instances).toEqual([]);
-    expect(first.overrides).toEqual({ [ownedCloudComputer.boxId]: "deleted" });
+    expect(first.overrides).toEqual({ [ownedCloudComputer.computerId]: "deleted" });
 
     const later = reconcileCloudInventorySnapshot(
       [ownedCloudComputer],
@@ -351,10 +351,10 @@ describe("cloud computer inventory UI", () => {
     const stale = reconcileCloudInventorySnapshot(
       [{ ...ownedCloudComputer, state: "running" }],
       [ownedCloudComputer],
-      { [ownedCloudComputer.boxId]: "sleeping" },
+      { [ownedCloudComputer.computerId]: "sleeping" },
     );
     expect(stale.instances[0]?.state).toBe("archived");
-    expect(stale.overrides).toEqual({ [ownedCloudComputer.boxId]: "sleeping" });
+    expect(stale.overrides).toEqual({ [ownedCloudComputer.computerId]: "sleeping" });
 
     const missing = reconcileCloudInventorySnapshot([], stale.instances, stale.overrides);
     expect(missing.instances[0]?.state).toBe("archived");
@@ -451,7 +451,7 @@ describe("VPS computer inventory UI", () => {
   it("keeps disconnected, unavailable, and empty states distinct", () => {
     expect(renderCard({ configured: false, sshAlias: null })).toContain("VPS is not configured");
     expect(renderCard({ unavailableReason: "SSH host cannot be reached" })).toContain("SSH host cannot be reached");
-    expect(renderCard()).toContain("No OpenMaus-managed VPS computers found");
+    expect(renderCard()).toContain("No Open Orgo Bot-managed VPS computers found");
   });
 
   it("uses honest status labels", () => {

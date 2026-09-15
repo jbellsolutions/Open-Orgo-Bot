@@ -1,5 +1,5 @@
-// Config + data dirs. One file, ~/.openmausbot/config.json, env fallbacks:
-//   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"}, "box": {"token":"…"},
+// Config + data dirs. One file, ~/.openorgobot/config.json, env fallbacks:
+//   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"}, "orgo": {"apiKey":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
 import { readFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
@@ -310,7 +310,7 @@ const appConfigSchema = z.object({
   /** Project key used for Sessions, catalog and agent tools. userId/sessionId
    * are non-secret local identifiers used to reuse one Composio Session. */
   composio: z.object({ apiKey: optionalText, userId: optionalText, sessionId: optionalText }).optional(),
-  box: z.object({ token: optionalText }).optional(),
+  orgo: z.object({ apiKey: optionalText, workspaceId: optionalText }).optional(),
   vps: vpsConfigSchema.optional(),
   /** Optional OpenCode key; persisted write-only and passed only to its child. */
   opencodeGo: z.object({ apiKey: optionalText }).optional(),
@@ -377,7 +377,7 @@ export interface AppConfig {
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
-  box?: { token?: string };
+  orgo?: { apiKey?: string; workspaceId?: string };
   /** A named host from the user's SSH config. Authentication stays with SSH. */
   vps?: { sshAlias?: string };
   opencodeGo?: { apiKey?: string };
@@ -576,19 +576,22 @@ export function providerReloadKeys(patch: object): string[] {
 }
 
 // OMB_DATA_DIR isolates test/soak rigs from the user's real fleet.
-export const DATA_DIR = process.env.OMB_DATA_DIR ?? join(homedir(), ".openmausbot");
-const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
+export const DATA_DIR = process.env.OOB_DATA_DIR ?? process.env.OMB_DATA_DIR ?? join(homedir(), ".openorgobot");
+const LEGACY_DATA_DIRS = [join(homedir(), ".openmausbot"), join(homedir(), ".opengrokbot")];
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
 
 export function ensureDirs() {
   // one-time migration from the pre-rename data dir — bots, transcripts,
   // config and keys all carry over
-  if (!existsSync(DATA_DIR) && existsSync(LEGACY_DATA_DIR)) {
-    try {
-      renameSync(LEGACY_DATA_DIR, DATA_DIR);
-    } catch {
-      /* cross-device or busy — fall through to a fresh dir */
+  if (!existsSync(DATA_DIR)) {
+    const legacy = LEGACY_DATA_DIRS.find((candidate) => existsSync(candidate));
+    if (legacy) {
+      try {
+        renameSync(legacy, DATA_DIR);
+      } catch {
+        /* cross-device or busy — fall through to a fresh dir */
+      }
     }
   }
   for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true });
@@ -651,8 +654,9 @@ export function loadConfig(): AppConfig {
   if (process.env.OPENAI_COMPAT_PROVIDER !== undefined) cfg.openaiCompat.provider = process.env.OPENAI_COMPAT_PROVIDER;
   cfg.composio = { ...cfg.composio };
   if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
-  cfg.box = { ...cfg.box };
-  if (process.env.BOX_TOKEN !== undefined) cfg.box.token = process.env.BOX_TOKEN;
+  cfg.orgo = { ...cfg.orgo };
+  if (process.env.ORGO_API_KEY !== undefined) cfg.orgo.apiKey = process.env.ORGO_API_KEY;
+  if (process.env.ORGO_WORKSPACE_ID !== undefined) cfg.orgo.workspaceId = process.env.ORGO_WORKSPACE_ID;
   cfg.opencodeGo = { ...cfg.opencodeGo };
   if (process.env.OPENCODE_API_KEY !== undefined) cfg.opencodeGo.apiKey = process.env.OPENCODE_API_KEY;
   cfg.tts = { ...cfg.tts };
@@ -660,7 +664,7 @@ export function loadConfig(): AppConfig {
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.OMB_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.OMB_OPENAI_IMAGE_KEY;
   if (process.env.OMB_CUSTOM_IMAGE_KEY !== undefined) cfg.imageGen.customApiKey = process.env.OMB_CUSTOM_IMAGE_KEY;
-  // The sign-in allow-list: env is how a headless box or a container is
+  // The sign-in allow-list: env is how a headless server or a container is
   // bootstrapped before anyone can reach Settings.
   const splitEmails = (value: string) => value.split(/[,\s]+/).map((entry) => entry.trim().toLowerCase()).filter(Boolean);
   if (process.env.OMB_SIGNIN_EMAILS !== undefined || process.env.OMB_SIGNIN_MEMBER_EMAILS !== undefined) {
@@ -684,7 +688,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.anthropic?.key, "OMB_ANTHROPIC_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
-    [patch.box?.token, "BOX_TOKEN"],
+    [patch.orgo?.apiKey, "ORGO_API_KEY"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "OMB_TTS_KEY"],
     [patch.imageGen?.key, "OMB_OPENAI_IMAGE_KEY"],
@@ -702,6 +706,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.anthropic?.url, "OMB_ANTHROPIC_API_URL"],
     [patch.openaiCompat?.model, "OPENAI_COMPAT_MODEL"],
     [patch.openaiCompat?.provider, "OPENAI_COMPAT_PROVIDER"],
+    [patch.orgo?.workspaceId, "ORGO_WORKSPACE_ID"],
   ];
   for (const [value, name] of settings) {
     if (value === undefined) continue;
@@ -721,7 +726,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OMB_ANTHROPIC_API_URL",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
-  "BOX_TOKEN",
+  "ORGO_API_KEY",
+  "ORGO_WORKSPACE_ID",
   "OPENCODE_API_KEY",
   "OMB_TTS_KEY",
   "OMB_OPENAI_IMAGE_KEY",
@@ -776,7 +782,7 @@ export function saveConfig(patch: Partial<AppConfig>, options: { replaceInstance
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "anthropic", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
+  for (const key of ["xai", "anthropic", "openaiCompat", "composio", "orgo", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -848,7 +854,7 @@ export function saveConfig(patch: Partial<AppConfig>, options: { replaceInstance
  * PERSISTABLE: instanceConfigs() injects credential env into consuming
  * drivers' entries for the live fleet, so only their originally configured
  * environment is retained — otherwise saving an override would
- * copy xai/box/opencodeGo secrets into the instances section of
+ * copy xai/Orgo/opencodeGo secrets into the instances section of
  * config.json. */
 export function withInstanceCli(
   cfg: AppConfig,
@@ -896,7 +902,7 @@ interface InstanceCliUpdate {
 
 /** The credential env instanceConfigs() injects for one driver at runtime.
  * Each secret goes only to the driver that actually reads it: the API-key
- * Grok driver reads XAI_API_KEY, the Computer driver reads BOX_TOKEN, and
+ * Grok driver reads XAI_API_KEY and OpenCode reads OPENCODE_API_KEY.
  * OpenCode reads OPENCODE_API_KEY. Every other engine brings its own
  * login, so handing it a key it never uses would only put that key in the
  * environment of an unrelated child process. */
@@ -912,7 +918,6 @@ function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string
     environment.set("OPENAI_COMPAT_API_KEY", cfg.openaiCompat.key);
   if (driver === "openai-compat" && cfg.openaiCompat?.url)
     environment.set("OPENAI_COMPAT_URL", cfg.openaiCompat.url);
-  if (driver === "boxAgent" && cfg.box?.token) environment.set("BOX_TOKEN", cfg.box.token);
   if (driver === "opencodeGo" && cfg.opencodeGo?.apiKey) environment.set("OPENCODE_API_KEY", cfg.opencodeGo.apiKey);
   return environment;
 }
@@ -938,6 +943,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   // The driver stays registered for enterprise licences, which keep Gemini
   // CLI — `{"instances": {"gemini": {"driver": "geminiAgent"}}}` restores it.
   const DEFAULT_FLEET: InstanceConfigMap = {
+    hermes: { driver: "hermesAgent" },
     grok: { driver: "grokAgent" },
     kimi: { driver: "kimiAgent" },
     droid: { driver: "droidAgent" },
@@ -946,10 +952,8 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     codex: { driver: "codex" },
     antigravity: { driver: "antigravityAgent" },
     opencodeGo: { driver: "opencodeGo" },
-    computer: { driver: "boxAgent" },
     openaiCompat: { driver: "openai-compat" },
     qwen: { driver: "qwenAgent" },
-    hermes: { driver: "hermesAgent" },
     pi: { driver: "piAgent" },
   };
   const CUSTOM_ONLY = {

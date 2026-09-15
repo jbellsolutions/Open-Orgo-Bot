@@ -4,7 +4,7 @@ Ask a bot in ordinary language, for example:
 
 > Prepare a report at 9 am on the first of every month, in Asia/Kolkata.
 
-The bot turns calendar timing into a cron expression, and OpenMausBot validates
+The bot turns calendar timing into a cron expression, and Open Orgo Bot validates
 it. The existing confirmation card shows the rule, its timezone and the next
 three dates. Nothing is scheduled until you confirm. The scheduler wakes the
 bot at the matching time; no model runs in the background to check the date.
@@ -51,7 +51,7 @@ use an appropriate event/webhook workflow instead of a fake weekly schedule.
 - Daylight-saving gaps move the chosen wall-clock time forward through the
   gap. During a repeated hour, a matching clock time runs once, at its first
   occurrence. The preview uses the same calculation as execution.
-- OpenMausBot must be running to dispatch routines, including cloud-targeted
+- Open Orgo Bot must be running to dispatch routines, including cloud-targeted
   routines. There is no external always-on scheduling service in this change.
 - Existing catch-up policy remains: up to 12 hours late, one missed occurrence
   can be dispatched; older work receives a missed-run receipt. The next date

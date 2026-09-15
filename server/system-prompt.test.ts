@@ -81,7 +81,7 @@ describe("computerPrompt", () => {
   it("distinguishes background window control from foreground desktop input", () => {
     const prompt = computerPrompt("local");
     expect(prompt).toContain("background delivery");
-    expect(prompt).toContain("do not bring OpenMausBot");
+    expect(prompt).toContain("do not bring Open Orgo Bot");
     expect(prompt).toContain("dedicated browser tools");
     expect(prompt).toContain("keeping the user's intended browser profile/account");
     expect(prompt).toContain("Do not silently retry a background refusal");
@@ -96,14 +96,13 @@ describe("computerPrompt", () => {
   it("shares the authorized sign-in policy across every computer and browser surface", () => {
     expect(computerPrompt("vm-private")).toContain("your own isolated Cua sandbox");
     expect(computerPrompt("vm-shared")).toContain("a shared, isolated Cua sandbox");
-    expect(computerPrompt("box")).toContain("your own cloud computer");
+    expect(computerPrompt("orgo")).toContain("your own cloud computer");
     expect(computerPrompt("vps")).toContain("self-hosted remote Linux computer");
     expect(computerPrompt("local")).toContain("act on the user's computer");
-    for (const kind of ["vm-private", "vm-shared", "box", "vps", "local"] as const) {
+    for (const kind of ["vm-private", "vm-shared", "orgo", "vps", "local"] as const) {
       expect(computerPrompt(kind).endsWith(SIGN_IN_PROMPT)).toBe(true);
       expect(computerPrompt(kind).startsWith(" ")).toBe(true);
     }
-    expect(computerPrompt("box-agent")).toBe(SIGN_IN_PROMPT);
     expect(BUILT_IN_BROWSER_SYSTEM_PROMPT.endsWith(SIGN_IN_PROMPT)).toBe(true);
   });
 

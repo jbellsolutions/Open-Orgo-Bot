@@ -1,6 +1,6 @@
 // Shared provisioning and shell contract for the cloud computer's Cua Driver.
-// The box command API is the transport boundary: the daemon stays loopback-only
-// inside the VM and OpenMausBot never exposes another inbound port.
+// The Orgo command API is the transport boundary: the daemon stays loopback-only
+// inside the VM and Open Orgo Bot never exposes another inbound port.
 
 export const REMOTE_CUA_VERSION = "0.20.0";
 export const REMOTE_CUA_EXECUTABLE = "/opt/ogb/cua-driver";
@@ -95,7 +95,7 @@ const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'
 export const MAX_REMOTE_COMMAND_LENGTH = 4_000;
 
 /** Run a user- or model-supplied command without inheriting provider or
- * account credentials from an older box image. Keep this shared by the bot
+ * account credentials from an older computer image. Keep this shared by the bot
  * tool and the owner's Computer-panel console so the two boundaries cannot
  * drift apart. */
 export function isolatedRemoteCommand(command: string): string {
@@ -114,7 +114,7 @@ export function isolatedRemoteCommand(command: string): string {
   ].join(" ");
 }
 
-/** Start the already-installed daemon after a box resume. This is cheap when
+/** Start the already-installed daemon after an Orgo computer resumes. This is cheap when
  * it is healthy and intentionally does not install anything on the hot path. */
 export function ensureRemoteCuaCommand(): string {
   return [
@@ -153,7 +153,7 @@ export function remoteComputerBootstrapCommand(botName: string): string {
   ].join("\n");
   // The display name is untrusted. Encode the banner before composing the
   // nested tmux shell so substitutions/backticks can never become syntax.
-  const banner = Buffer.from(`  ▦ ${botName}'s computer — OpenMausBot`).toString("base64");
+  const banner = Buffer.from(`  ▦ ${botName}'s computer — Open Orgo Bot`).toString("base64");
   const tmuxSessionCommand = [
     "echo",
     `printf %s ${shellQuote(banner)} | base64 -d`,

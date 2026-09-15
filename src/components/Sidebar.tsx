@@ -1141,7 +1141,7 @@ export function BotListItem({
             <span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] text-ink-secondary">
               {working ? (
                 // the same typing dots as the chat header; sized to the text's
-                // line box so the row does not jump when work starts or ends
+                // line orgo so the row does not jump when work starts or ends
                 <span className="flex h-[1.5em] items-center" role="status">
                   <WorkingDots size={3.5} />
                   <span className="sr-only">{t("sidebar.preview.working")}</span>
@@ -1611,7 +1611,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
   const q = query.trim().toLowerCase();
 
-  // Message search rides the same box as the name filter: names match
+  // Message search rides the same orgo as the name filter: names match
   // instantly from local state; transcript hits are the SearchResults
   // section below the list (debounced, lands on the message).
 

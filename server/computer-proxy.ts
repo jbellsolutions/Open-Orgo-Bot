@@ -1,10 +1,10 @@
 // computer-proxy — a minimal MCP stdio server the claude CLI spawns
 // (agentcal's permission-proxy pattern, dedicated entry file so there is
 // no argv-dispatch fork-bomb hazard). It gives the agent its bot's cloud
-// computer (box.ascii.dev) as CUA-grade tools.
+// computer (Orgo) as CUA-grade tools.
 //
-// Transport: every action goes through the box's REST run-command
-// endpoint (no inbound port on the box, no tunnel), so a round trip is
+// Transport: every action goes through the Orgo's REST run-command
+// endpoint (no inbound port on the Orgo, no tunnel), so a round trip is
 // expensive (~TLS + shell spawn). The whole design is therefore built
 // around ONE round trip per step:
 //
@@ -18,7 +18,7 @@
 //   - JPEG, not PNG (5-10x fewer bytes, identical vision tokens), and
 //     the downscale only runs when the display is wider than the model's
 //     coordinate space.
-//   - Coordinate scaling happens box-side in shell arithmetic, so there
+//   - Coordinate scaling happens Orgo-side in shell arithmetic, so there
 //     is no separate "what size is the display" round trip per turn.
 //   - Frames come back inline in stdout when small enough; the files API
 //     is only a fallback (one extra hop) for big ones.
@@ -46,10 +46,11 @@ import {
   REMOTE_CUA_VERSION,
   semanticBrowserCommand,
 } from "./remote-computer.ts";
+import { createHash } from "node:crypto";
 
-const BOX_API = process.env.OGB_BOX_API ?? "https://ascii.dev/api/box/v1";
-const boxId = process.env.OGB_BOX_ID ?? "";
-const token = process.env.OGB_BOX_TOKEN ?? "";
+const ORGO_API = process.env.OOB_ORGO_API ?? "https://www.orgo.ai/api";
+const computerId = process.env.OOB_ORGO_COMPUTER_ID ?? "";
+const apiKey = process.env.OOB_ORGO_API_KEY ?? "";
 
 // Who-is-driving: while the person holds control in the app, every tool
 // below is refused (not queued — a queued click lands after they've moved
@@ -64,7 +65,7 @@ const CONTROL_WAIT_MS = Math.max(Number(process.env.OMB_CONTROL_WAIT_MS) || 600_
 const control = createControlClient({ cacheMs: Math.min(750, CONTROL_POLL_MS) });
 
 /** The coordinate space the model sees: frames are downscaled to this
- * width, and clicks are scaled back up to the real display box-side. */
+ * width, and clicks are scaled back up to the real display Orgo-side. */
 const SHOT_WIDTH = 1280;
 const JPEG_QUALITY = 75;
 const SHOT_PATH = "/tmp/ogb-shot.jpg";
@@ -72,7 +73,7 @@ const SHOT_PATH = "/tmp/ogb-shot.jpg";
 const SETTLE_MS = 350;
 /** Gap between batched actions so focus changes land before typing. */
 const ACTION_GAP_MS = 120;
-const CHROME_PROFILE = "$HOME/.openmausbot/chrome-profile";
+const CHROME_PROFILE = "$HOME/.openorgobot/chrome-profile";
 const CHROME_DEBUG_FLAGS =
   `--user-data-dir="${CHROME_PROFILE}" --password-store=basic --disable-session-crashed-bubble --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`;
 // Keep one durable browser identity regardless of which Chromium binary an
@@ -88,7 +89,7 @@ const CHROME_PROFILE_SETUP = [
   '      echo "failed to copy browser profile: $browser_dir" >&2',
   "      exit 1",
   "    fi",
-  '    mv "$browser_dir" "$browser_dir.pre-openmausbot-$(date +%s)-$$"',
+  '    mv "$browser_dir" "$browser_dir.pre-openorgobot-$(date +%s)-$$"',
   "  fi",
   '  if [ -L "$browser_dir" ]; then rm -f "$browser_dir"; fi',
   '  ln -s "$profile" "$browser_dir"',
@@ -105,50 +106,81 @@ interface RunOut {
   stderr: string;
 }
 
-/** Boxes archive themselves when idle (billing pauses, the disk survives),
+/** Orgo computers suspend themselves when idle (billing pauses, the disk survives),
  * which can happen mid-conversation — after that every command comes back
  * 409 machine_not_running. Wake it and carry on rather than handing the
  * agent a cryptic failure it can only guess at. */
-async function resumeBox(): Promise<boolean> {
-  const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
-  await fetch(`${BOX_API}/boxes/${boxId}/resume`, { method: "POST", headers: auth }).catch(() => null);
+async function resumeOrgo(): Promise<boolean> {
+  const auth = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
+  await fetch(`${ORGO_API}/computers/${computerId}/start`, { method: "POST", headers: auth, body: "{}" }).catch(() => null);
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000));
-    const res = await fetch(`${BOX_API}/boxes/${boxId}`, { headers: auth }).catch(() => null);
+    const res = await fetch(`${ORGO_API}/computers/${computerId}`, { headers: auth }).catch(() => null);
     const body: any = await res?.json().catch(() => null);
-    const state = body?.box?.state;
-    if (state && ["idle", "ready", "running"].includes(state)) return true;
-    if (state === "error") return false;
+    const state = body?.computer?.status ?? body?.data?.status ?? body?.status;
+    if (state === "running") return true;
+    if (state === "deleted") return false;
   }
   return false;
 }
 
-async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true): Promise<RunOut> {
-  // Old boxes may predate noEnv:true. Run every agent-issued command with an
+async function runOnOrgo(command: string, timeoutMs = 60_000, allowWake = true): Promise<RunOut> {
+  // Run every agent-issued command with an
   // explicit desktop-only environment so provider/account credentials cannot
   // leak through `computer_exec` or a child GUI process.
   const isolatedCommand = isolatedRemoteCommand(command);
-  const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
+  const res = await fetch(`${ORGO_API}/computers/${computerId}/bash`, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({ command: isolatedCommand }),
     signal: AbortSignal.timeout(timeoutMs),
   });
   const body: any = await res.json().catch(() => null);
-  if (res.status === 409 && allowWake) {
+  if ((res.status === 400 || res.status === 409) && allowWake) {
     const code = body?.code ?? body?.error?.code ?? "";
-    if (/machine_not_running|box_starting|not_running|starting/i.test(String(code))) {
-      const woke = await resumeBox();
-      if (woke) return runOnBox(command, timeoutMs, false);
+    if (/machine_not_running|computer.*not.*running|not_running|starting|suspended|stopped/i.test(String(code || body?.error || body?.message))) {
+      const woke = await resumeOrgo();
+      if (woke) return runOnOrgo(command, timeoutMs, false);
       return { ok: false, exitCode: null, stdout: "", stderr: "the computer is asleep and did not wake in time" };
     }
   }
   return {
-    ok: res.ok && body?.exitCode === 0,
-    exitCode: body?.exitCode ?? null,
-    stdout: body?.stdout ?? "",
-    stderr: body?.stderr ?? String(body?.message ?? (res.ok ? "" : `HTTP ${res.status}`)),
+    ok: res.ok && body?.success !== false,
+    exitCode: res.ok && body?.success !== false ? 0 : 1,
+    stdout: typeof body?.output === "string" ? body.output : "",
+    stderr: res.ok ? "" : String(body?.error ?? body?.message ?? `HTTP ${res.status}`),
+  };
+}
+
+async function directOrgo(path: string, body?: unknown, allowWake = true): Promise<{ ok: boolean; status: number; body: any }> {
+  const response = await fetch(`${ORGO_API}/computers/${computerId}${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const parsed: any = await response.json().catch(() => null);
+  if ((response.status === 400 || response.status === 409) && allowWake &&
+      /not.*running|starting|suspended|stopped/i.test(String(parsed?.code ?? parsed?.error ?? parsed?.message ?? ""))) {
+    if (await resumeOrgo()) return directOrgo(path, body, false);
+  }
+  return { ok: response.ok && parsed?.success !== false, status: response.status, body: parsed };
+}
+
+async function nativeFrame(): Promise<Frame | null> {
+  const result = await directOrgo("/screenshot");
+  const raw = result.body?.image ?? result.body?.data;
+  if (!result.ok || typeof raw !== "string") return null;
+  const data = raw.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
+  const bytes = Buffer.from(data, "base64");
+  if (!wholeImage(bytes)) return null;
+  const png = bytes[0] === 0x89 && bytes[1] === 0x50;
+  return {
+    data,
+    mime: png ? "image/png" : "image/jpeg",
+    hash: createHash("sha256").update(bytes).digest("hex"),
+    geometry: { width: 1280, height: 720 },
   };
 }
 
@@ -159,9 +191,9 @@ function metricsText(): string {
 }
 
 async function browserTargets(countObservation = true): Promise<BrowserTarget[]> {
-  // DevTools stays loopback-only inside the box. Only redacted fields are
+  // DevTools stays loopback-only inside the Orgo. Only redacted fields are
   // ever formatted into tool output; comparisonUrl remains internal.
-  const out = await runOnBox("curl -sf --max-time 2 http://127.0.0.1:9222/json/list", 5_000);
+  const out = await runOnOrgo("curl -sf --max-time 2 http://127.0.0.1:9222/json/list", 5_000);
   const targets = out.ok ? parseBrowserTargets(out.stdout) : [];
   if (countObservation && targets.length) observations.noteStructuredObservation();
   return targets;
@@ -194,7 +226,7 @@ async function waitForNavigation(
 
 const ENV = 'export DISPLAY=${DISPLAY:-:0}';
 const CUA_ENV = "CUA_DRIVER_INSTALL_CHANNEL=python_package CUA_DRIVER_RS_TELEMETRY_ENABLED=0";
-/** Resolve the real display size into $W/$H for box-side click scaling. */
+/** Resolve the real display size into $W/$H for Orgo-side click scaling. */
 const GEOMETRY = [
   "g=$(xdotool getdisplaygeometry 2>/dev/null)",
   'W=${g%% *}',
@@ -253,17 +285,17 @@ function captureBlock(settleMs = SETTLE_MS, crop: CropRegion | null = null): str
     ...cropSteps,
     's=$(stat -c%s "$f" 2>/dev/null || echo 0)',
     // SIZE is what makes the inline path safe: the frame is only trusted
-    // when the bytes we decoded match the bytes the box says it wrote
+    // when the bytes we decoded match the bytes the Orgo says it wrote
     'echo "SIZE $s"',
     `if [ "$s" -gt 0 ] && [ "$s" -le ${INLINE_MAX_BYTES} ]; then echo "B64 $(base64 -w0 "$f" 2>/dev/null || base64 "$f" | tr -d '\\n')"; fi`,
   ].join("; ");
 }
 
 /** A frame is only trusted when the bytes are a WHOLE image. Checking the
- * magic number alone is not enough: the box's command stdout has been
+ * magic number alone is not enough: the Orgo's command stdout has been
  * observed truncating a payload, and a truncated JPEG still starts with a
  * valid header — it just renders as a grey half-frame for the model. So
- * every frame must also end with its terminator, and (when the box told
+ * every frame must also end with its terminator, and (when the Orgo told
  * us how many bytes it wrote) match that length exactly. */
 function wholeImage(bytes: Buffer, expectedBytes?: number): boolean {
   if (bytes.length < 512) return false;
@@ -282,36 +314,27 @@ function wholeImage(bytes: Buffer, expectedBytes?: number): boolean {
   return false;
 }
 
-/** Big frames (and any inline read that came back malformed) are fetched
- * over HTTP: raw artifact bytes first, the files API's base64-in-JSON
- * envelope second. Both are validated — an error page served with a 200
- * must fall through, not reach the model as an "image". */
-async function fetchFrame(expectedBytes?: number): Promise<string | null> {
-  const auth = { authorization: `Bearer ${token}` };
+/** Big frames (and any inline read that came back malformed) fall back to
+ * Orgo's native screenshot endpoint. */
+async function fetchFrame(_expectedBytes?: number): Promise<string | null> {
+  const auth = { authorization: `Bearer ${apiKey}` };
   try {
     const res = await fetch(
-      `${BOX_API}/boxes/${boxId}/artifacts?path=${encodeURIComponent(SHOT_PATH)}`,
+      `${ORGO_API}/computers/${computerId}/screenshot`,
       { headers: auth, signal: AbortSignal.timeout(30_000) },
     );
     if (res.ok) {
-      const bytes = Buffer.from(await res.arrayBuffer());
-      if (wholeImage(bytes, expectedBytes)) return bytes.toString("base64");
+      const body: any = await res.json().catch(() => null);
+      const content = body?.image ?? body?.data;
+      if (typeof content === "string") {
+        const base64 = content.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
+        if (wholeImage(Buffer.from(base64, "base64"))) return base64;
+      }
     }
   } catch {
-    /* fall through to the files API */
+    /* no fallback */
   }
-  try {
-    const res = await fetch(
-      `${BOX_API}/boxes/${boxId}/files?path=${encodeURIComponent(SHOT_PATH)}&encoding=base64`,
-      { headers: auth, signal: AbortSignal.timeout(30_000) },
-    );
-    const body: any = await res.json().catch(() => null);
-    const content = body?.content;
-    if (!res.ok || typeof content !== "string" || !content) return null;
-    return wholeImage(Buffer.from(content, "base64"), expectedBytes) ? content : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 interface Frame {
@@ -360,7 +383,7 @@ function automationSummary(stdout: string): string {
 async function observationBounds(): Promise<{ width: number; height: number } | null> {
   let geometry = lastDisplayGeometry;
   if (!geometry) {
-    const out = await runOnBox([ENV, GEOMETRY, 'echo "GEOM $W $H"'].join("; "), 15_000);
+    const out = await runOnOrgo([ENV, GEOMETRY, 'echo "GEOM $W $H"'].join("; "), 15_000);
     geometry = geometryFrom(out.stdout);
     if (geometry) lastDisplayGeometry = geometry;
   }
@@ -675,7 +698,7 @@ const shellQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const settleOf = (args: any) => Math.min(Math.max(Number(args?.settle_ms) || SETTLE_MS, 0), 3000);
 const wantsFrame = (args: any) => args?.observe !== false;
 
-/** One action → the shell that performs it (scaling clicks box-side). */
+/** One action → the shell that performs it (scaling clicks Orgo-side). */
 function actionShell(a: any): string | { error: string } {
   const kind = String(a?.action ?? "");
   if (kind === "click") {
@@ -732,49 +755,57 @@ async function actAndObserve(
   actions: any[],
   note: string,
   args: any,
-  timeoutMs = 60_000,
+  _timeoutMs = 60_000,
 ): Promise<void> {
-  const parts: string[] = [];
-  for (const a of actions) {
-    const shell = actionShell(a);
-    if (typeof shell !== "string") return text(id, shell.error, true);
-    // X11 needs a beat between steps — a click that focuses a field and
-    // an immediate type will drop leading characters
-    if (parts.length) parts.push(`sleep ${(ACTION_GAP_MS / 1000).toFixed(2)}`);
-    parts.push(shell);
-  }
   observations.noteAction(actions.filter((action) => action?.action !== "wait").length);
   const observe = wantsFrame(args);
-  // The actions run in a guarded group so a failing xdotool is REPORTED
-  // rather than silently swallowed by the capture that follows it — but
-  // the capture still runs, so the model always gets to see the state it
-  // ended up in. Joining with ";" alone made a failed action look
-  // identical to one that did nothing.
-  const guarded = `if { ${parts.join("; ")}; }; then ACT=ok; else ACT=failed; fi`;
-  const command = [
-    ENV,
-    GEOMETRY,
-    ensureRemoteCuaCommand(),
-    guarded,
-    observe ? captureBlock(settleOf(args)) : "true",
-    'echo "ACT $ACT"',
-  ].join("; ");
-  const out = await runOnBox(command, timeoutMs);
-  const acted = /^ACT ok$/m.test(out.stdout);
-  if (!acted && !out.stdout.includes("GEOM")) {
-    return text(
-      id,
-      `${note.replace(/^./, (c) => c.toLowerCase())} failed: ${out.stderr.slice(0, 200) || `exit ${out.exitCode}`}`,
-      true,
-    );
+  let acted = true;
+  let detail = "Orgo native input";
+  for (const [index, action] of actions.entries()) {
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, ACTION_GAP_MS));
+    const kind = String(action?.action ?? "");
+    let result: Awaited<ReturnType<typeof directOrgo>>;
+    if (kind === "wait") {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(Math.max(Number(action.ms) || 500, 0), 5_000)));
+      continue;
+    } else if (kind === "click") {
+      const x = Math.round(Number(action.x));
+      const y = Math.round(Number(action.y));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return text(id, "click needs numeric x,y", true);
+      result = await directOrgo("/click", { x, y, button: action.button === "right" ? "right" : "left", double: action.double === true });
+    } else if (kind === "type_text") {
+      const value = String(action.text ?? "");
+      if (!value) return text(id, "nothing to type", true);
+      result = await directOrgo("/type", { text: value });
+    } else if (kind === "press_key") {
+      const key = String(action.keys ?? "").replace(/[^\w+]/g, "");
+      if (!key) return text(id, "press_key needs keys", true);
+      result = await directOrgo("/key", { key });
+    } else if (kind === "scroll") {
+      result = await directOrgo("/scroll", {
+        direction: action.direction === "up" ? "up" : "down",
+        amount: Math.min(Math.max(Math.round(Number(action.clicks) || 3), 1), 20),
+      });
+    } else {
+      return text(id, `unknown action ${kind || "(missing)"}`, true);
+    }
+    if (!result.ok) {
+      acted = false;
+      detail = String(result.body?.error ?? result.body?.message ?? `HTTP ${result.status}`).slice(0, 200);
+      break;
+    }
   }
-  const backend = automationSummary(out.stdout);
+  if (observe) await new Promise((resolve) => setTimeout(resolve, settleOf(args)));
   const full = acted
-    ? `${note}\n(${backend})`
-    : `${note}\n(the action reported an error: ${out.stderr.slice(0, 160) || "no detail"}; ${backend})`;
+    ? `${note}\n(Orgo native input)`
+    : `${note}\n(the action reported an error: ${detail})`;
   if (!observe) return text(id, full, !acted);
-  return observed(id, full, await frameFrom(out));
+  return observed(id, full, await nativeFrame(), null, true, !acted);
 }
+
+// Retained for semantic-browser and older guest compatibility paths.
+void automationSummary;
+void actionShell;
 
 async function semanticActAndObserve(
   id: unknown,
@@ -802,7 +833,7 @@ async function semanticActAndObserve(
     'echo "SEM $SEM"',
   ].join("; ");
   observations.noteAction();
-  const out = await runOnBox(command, action === "fill" ? 120_000 : 60_000);
+  const out = await runOnOrgo(command, action === "fill" ? 120_000 : 60_000);
   const acted = /^SEM ok$/m.test(out.stdout);
   // DOM mutations can invalidate backend node IDs; force a fresh snapshot
   // after every semantic action instead of risking a click on an old target.
@@ -864,6 +895,11 @@ async function call(id: unknown, name: string, args: any) {
     );
   }
   if (name === "screenshot") {
+    if (args.region === undefined) {
+      const frame = await nativeFrame();
+      if (!frame) return text(id, "screenshot failed: Orgo produced no frame", true);
+      return observed(id, "screen captured", frame, null, false);
+    }
     let crop: CropRegion | null = null;
     if (args.region !== undefined) {
       const bounds = await observationBounds();
@@ -877,7 +913,7 @@ async function call(id: unknown, name: string, args: any) {
         );
       }
     }
-    const out = await runOnBox([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock(0, crop)].join("; "), 60_000);
+    const out = await runOnOrgo([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock(0, crop)].join("; "), 60_000);
     if (/CROP_FAILED/.test(out.stdout)) {
       return text(id, `crop failed: ${out.stderr.slice(0, 200) || "ImageMagick could not create the requested region"}`, true);
     }
@@ -897,7 +933,7 @@ async function call(id: unknown, name: string, args: any) {
     );
   }
   if (name === "browser_snapshot") {
-    const out = await runOnBox(semanticBrowserCommand("snapshot", {}), 20_000);
+    const out = await runOnOrgo(semanticBrowserCommand("snapshot", {}), 20_000);
     if (!out.ok) {
       semanticBrowserUrl = null;
       semanticBrowserRefs.clear();
@@ -950,20 +986,9 @@ async function call(id: unknown, name: string, args: any) {
   }
   if (name === "observation_metrics") return text(id, metricsText());
   if (name === "computer_status") {
-    const command = [
-      ENV,
-      ensureRemoteCuaCommand(),
-      `if [ -x ${REMOTE_CUA_EXECUTABLE} ] && ${REMOTE_CUA_EXECUTABLE} status --socket ${REMOTE_CUA_SOCKET} >/dev/null 2>&1; then`,
-      `  echo "CUA $(${REMOTE_CUA_EXECUTABLE} --version)"`,
-      `  env ${CUA_ENV} ${REMOTE_CUA_EXECUTABLE} call health_report '{}' --socket ${REMOTE_CUA_SOCKET} 2>/dev/null || true`,
-      "else echo 'X11 fallback'; fi",
-    ].join("\n");
-    const out = await runOnBox(command, 20_000);
-    if (!/^CUA /m.test(out.stdout)) {
-      return text(id, "Cloud computer automation: X11 fallback (Cua Driver is still installing or needs repair).", true);
-    }
-    const overall = out.stdout.match(/"overall"\s*:\s*"(ok|degraded|failed)"/)?.[1] ?? "unknown";
-    return text(id, `Cloud computer automation: Cua Driver ${REMOTE_CUA_VERSION} (${overall}).`);
+    const status = await directOrgo("");
+    const value = status.body?.computer?.status ?? status.body?.data?.status ?? status.body?.status ?? "unknown";
+    return text(id, status.ok ? `Orgo computer: ${value}. Native screenshot and input APIs are available.` : `Orgo computer status failed (HTTP ${status.status}).`, !status.ok);
   }
   if (name === "click") {
     const x = Math.round(Number(args.x));
@@ -1011,10 +1036,10 @@ async function call(id: unknown, name: string, args: any) {
       return text(id, `command is too long (maximum ${MAX_REMOTE_COMMAND_LENGTH} characters)`, true);
     }
     observations.noteAction();
-    const out = await runOnBox(command, 120_000);
+    const out = await runOnOrgo(command, 120_000);
     const note = `exit ${out.exitCode}\n${out.stdout.slice(-6000)}${out.stderr ? `\n[stderr]\n${out.stderr.slice(-2000)}` : ""}`;
     if (args.observe !== true) return text(id, note);
-    const shot = await runOnBox([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock()].join("; "), 60_000);
+    const shot = await runOnOrgo([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock()].join("; "), 60_000);
     return observed(id, note, await frameFrom(shot));
   }
   if (name === "wait_for") {
@@ -1069,7 +1094,7 @@ async function call(id: unknown, name: string, args: any) {
     // appending a screenshot to the same remote shell would bypass the fresh
     // control check and could capture credentials they typed. A follow-up
     // screenshot is a separate tool call and therefore re-checks the lease.
-    const out = await runOnBox(loop, (timeout + 15) * 1000);
+    const out = await runOnOrgo(loop, (timeout + 15) * 1000);
     const marker = out.stdout.match(/^WAIT_RESULT (yes|no) ELAPSED (\d+)$/m);
     if (!out.ok || !marker) {
       const detail = out.stderr.slice(0, 300) || `exit ${out.exitCode ?? "unknown"}`;
@@ -1101,7 +1126,7 @@ async function call(id: unknown, name: string, args: any) {
       observe ? captureBlock(600) : "true",
     ].join("; ");
     observations.noteAction();
-    const out = await runOnBox(command, 60_000);
+    const out = await runOnOrgo(command, 60_000);
     const verification = await waitForNavigation(normalized, 1);
     const current = verification.targets.map((target) => target.url).join(", ") || "unavailable";
     const note = verification.ok
@@ -1121,7 +1146,7 @@ async function handle(msg: any) {
       result: {
         protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "openmausbot-computer", version: "3" },
+        serverInfo: { name: "open-orgo-bot-computer", version: "3" },
       },
     });
   }

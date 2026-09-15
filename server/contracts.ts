@@ -12,7 +12,7 @@ export type DriverKind = string;
 export type InstanceId = string;
 export type ThreadId = string;
 export type TurnId = string;
-export type CloudBackend = "box" | "vps";
+export type CloudBackend = "orgo" | "vps";
 
 export type ProviderErrorCode =
   | "missing_cli"
@@ -52,7 +52,7 @@ export interface ModelSelection {
   effort?: EffortLevel;
 }
 
-/** An image already admitted to OpenMausBot's private attachment store.
+/** An image already admitted to Open Orgo Bot's private attachment store.
  * Drivers receive this structured value instead of learning a host path from
  * prompt text. The harness validates the path and size before constructing it. */
 export interface TurnImageInput {
@@ -238,14 +238,14 @@ export interface SendTurnInput {
      * bridge harness-controlled lets it turn connection requests into trusted
      * chat cards consistently across provider CLIs. */
     composio?: { command: string; args: string[]; env: Record<string, string> };
-    /** Cloud computer, reached through OpenMausBot's REST-to-MCP adapter.
+    /** Cloud computer, reached through Open Orgo Bot's REST-to-MCP adapter.
      * `control` is the harness's loopback who-is-driving endpoint: the
      * adapter consults it so a person who takes the wheel in the panel
      * pauses the bot's hands mid-turn instead of typing over them. */
     computer?: {
-      kind?: "box";
-      boxId: string;
-      token: string;
+      kind?: "orgo";
+      computerId: string;
+      apiKey: string;
       control?: { url: string; token: string };
     };
     /** Direct stdio connection to a Cua Driver MCP server (host, sandbox, or
@@ -293,7 +293,7 @@ export interface ProviderAdapter {
      * the harness only offers agents tooling (and prompts about it) to
      * drivers that can actually hand it to the agent. */
     agentsMcp?: boolean;
-    /** True when the driver mounts turn.integrations.computer (the box's
+    /** True when the driver mounts turn.integrations.computer (the Orgo
      * screenshot/click tools). Same rule as agentsMcp: a bot must never be
      * told it has a computer whose tools its driver cannot mount — it
      * burns turns hunting for tools that aren't there. */

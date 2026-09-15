@@ -50,7 +50,7 @@ describe("the managed Caddy", () => {
     expect(normalizeDomainOption(" HTTPS://Maus.Example.com/ ")).toBe("maus.example.com");
     expect(normalizeDomainOption("maus.example.com:443")).toEqual({ error: expect.stringContaining("bare hostname") });
     expect(normalizeDomainOption("localhost")).toEqual({ error: expect.stringContaining("bare hostname") });
-    expect(normalizeDomainOption("box.internal")).toEqual({ error: expect.stringContaining("public domain") });
+    expect(normalizeDomainOption("orgo.internal")).toEqual({ error: expect.stringContaining("public domain") });
     expect(normalizeDomainOption("nodots")).toEqual({ error: expect.stringContaining("bare hostname") });
   });
 

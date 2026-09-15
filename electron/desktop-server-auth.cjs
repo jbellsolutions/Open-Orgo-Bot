@@ -1,5 +1,7 @@
 "use strict";
 
+// Protocol compatibility identifier, not user-facing branding. The server
+// deliberately continues to accept this exact header across renamed builds.
 const DESKTOP_MUTATION_HEADER = "X-OpenMausBot-Desktop-Owner";
 
 /** Add the per-launch owner capability to main-process requests. Chromium's

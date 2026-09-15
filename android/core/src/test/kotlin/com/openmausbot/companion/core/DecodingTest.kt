@@ -331,7 +331,7 @@ class DecodingTest {
         assertTrue(instance.driverKind.isNotEmpty())
         val config = decodeFixture<ConfigStatus>("config")
         assertEquals("Ada Lovelace", config.profile?.name)
-        assertEquals(false, config.box?.configured)
+        assertEquals(false, config.orgo?.configured)
     }
 
     @Test

@@ -588,12 +588,12 @@ describe("Instance CLI override", () => {
     // instances section of config.json.
     const cfg: AppConfig = {
       xai: { key: "SECRET-XAI" },
-      box: { token: "SECRET-BOX" },
+      orgo: { apiKey: "SECRET-BOX" },
       opencodeGo: { apiKey: "SECRET-OCG" },
       instances: {
         claude: { driver: "claudeAgent" },
         grokApi: { driver: "grok" },
-        computer: { driver: "boxAgent" },
+        computer: { driver: "hermesAgent" },
         opencode: { driver: "opencodeGo" },
       },
     };
@@ -608,18 +608,18 @@ describe("Instance CLI override", () => {
     expect(kept.config.instances!.claude.environment).toEqual({ MY_FLAG: "1" });
   });
 
-  it("preserves explicit instance credentials even when workspace injection shadows them", () => {
+  it("preserves explicit per-instance environment values", () => {
     const cfg: AppConfig = {
-      box: { token: "fixture-workspace-box" },
+      orgo: { apiKey: "fixture-workspace-orgo" },
       xai: { key: "fixture-shared-xai" },
       instances: {
-        computer: { driver: "boxAgent", environment: { BOX_TOKEN: "fixture-instance-box", MY_FLAG: "1" } },
+        computer: { driver: "hermesAgent", environment: { MY_TOKEN: "fixture-instance", MY_FLAG: "1" } },
         sameCredential: { driver: "grok", environment: { XAI_API_KEY: "fixture-shared-xai" } },
-        injectedOnly: { driver: "boxAgent" },
+        injectedOnly: { driver: "hermesAgent" },
       },
     };
     const instances = persistableInstanceConfigs(cfg);
-    expect(instances.computer.environment).toEqual({ BOX_TOKEN: "fixture-instance-box", MY_FLAG: "1" });
+    expect(instances.computer.environment).toEqual({ MY_TOKEN: "fixture-instance", MY_FLAG: "1" });
     expect(instances.sameCredential.environment).toEqual({ XAI_API_KEY: "fixture-shared-xai" });
     expect(instances.injectedOnly.environment).toBeUndefined();
     instances.computer.environment!.MY_FLAG = "changed";
@@ -647,7 +647,7 @@ describe("credential env narrowing", () => {
   it("injects each credential only into the driver that consumes it", () => {
     const cfg: AppConfig = {
       xai: { key: "SECRET-XAI" },
-      box: { token: "SECRET-BOX" },
+      orgo: { apiKey: "SECRET-BOX" },
       opencodeGo: { apiKey: "SECRET-OCG" },
       instances: {
         grokApi: { driver: "grok" },
@@ -659,30 +659,27 @@ describe("credential env narrowing", () => {
     };
     const instances = instanceConfigs(cfg);
     expect(instances.grokApi.environment).toEqual({ XAI_API_KEY: "SECRET-XAI" });
-    expect(instances.computer.environment).toEqual({ BOX_TOKEN: "SECRET-BOX" });
+    expect(instances.computer.environment).toEqual({});
     expect(instances.opencode.environment).toEqual({ OPENCODE_API_KEY: "SECRET-OCG" });
     // engines that bring their own login receive NO workspace credential
     expect(instances.claude.environment).toEqual({});
     expect(instances.codex.environment).toEqual({});
   });
 
-  it("hands no credential to any default-fleet CLI engine except the Computer", () => {
+  it("hands no Orgo credential to any default-fleet CLI engine", () => {
     // the default `grok` instance is the CLI-login grokAgent, not the
     // API-key driver, so a configured xai key reaches nobody by default
-    const cfg: AppConfig = { xai: { key: "SECRET-XAI" }, box: { token: "SECRET-BOX" } };
+    const cfg: AppConfig = { xai: { key: "SECRET-XAI" }, orgo: { apiKey: "SECRET-BOX" } };
     const instances = instanceConfigs(cfg);
-    for (const [id, entry] of Object.entries(instances)) {
-      if (id === "computer") expect(entry.environment).toEqual({ BOX_TOKEN: "SECRET-BOX" });
-      else expect(entry.environment).toEqual({});
-    }
+    for (const entry of Object.values(instances)) expect(entry.environment).toEqual({});
   });
 
   it("keeps a per-instance environment while layering the credential on top", () => {
     const cfg: AppConfig = {
-      box: { token: "SECRET-BOX" },
-      instances: { computer: { driver: "boxAgent", environment: { MY_FLAG: "1" } } },
+      orgo: { apiKey: "SECRET-BOX" },
+      instances: { computer: { driver: "hermesAgent", environment: { MY_FLAG: "1" } } },
     };
-    expect(instanceConfigs(cfg).computer.environment).toEqual({ MY_FLAG: "1", BOX_TOKEN: "SECRET-BOX" });
+    expect(instanceConfigs(cfg).computer.environment).toEqual({ MY_FLAG: "1" });
   });
 });
 
@@ -759,7 +756,7 @@ describe("credential env preference", () => {
     "OPENAI_COMPAT_URL",
     "OPENAI_COMPAT_MODEL",
     "OPENAI_COMPAT_PROVIDER",
-    "BOX_TOKEN",
+    "ORGO_API_KEY",
     "OPENCODE_API_KEY",
     "OMB_TTS_KEY",
     "OMB_OPENAI_IMAGE_KEY",
@@ -789,20 +786,20 @@ describe("credential env preference", () => {
       join(DATA_DIR, "config.json"),
       JSON.stringify({
         xai: { key: "file-xai", url: "https://api.example.test/v1" },
-        box: { token: "file-box" },
+        orgo: { apiKey: "file-orgo" },
         opencodeGo: { apiKey: "file-ocg" },
         tts: { key: "file-tts", voice: "narrator" },
         imageGen: { key: "file-image" },
       }),
     );
     process.env.XAI_API_KEY = "env-xai";
-    process.env.BOX_TOKEN = "env-box";
+    process.env.ORGO_API_KEY = "env-orgo";
     process.env.OPENCODE_API_KEY = "env-ocg";
     process.env.OMB_TTS_KEY = "env-tts";
     process.env.OMB_OPENAI_IMAGE_KEY = "env-image";
     const cfg = loadConfig();
     expect(cfg.xai).toEqual({ key: "env-xai", url: "https://api.example.test/v1" });
-    expect(cfg.box).toEqual({ token: "env-box" });
+    expect(cfg.orgo).toEqual({ apiKey: "env-orgo" });
     expect(cfg.opencodeGo).toEqual({ apiKey: "env-ocg" });
     expect(cfg.tts).toEqual({ key: "env-tts", voice: "narrator" });
     expect(cfg.imageGen).toEqual({ key: "env-image" });
@@ -953,19 +950,19 @@ describe("credential env preference", () => {
 
   it("syncCredentialEnv keeps process.env in step with a credential save", () => {
     process.env.XAI_API_KEY = "boot-injected";
-    process.env.BOX_TOKEN = "boot-injected";
+    process.env.ORGO_API_KEY = "boot-injected";
     process.env.COMPOSIO_API_KEY = "boot-injected";
     syncCredentialEnv({
       xai: { key: "just-saved" },
       composio: { apiKey: "ak_just_saved" },
-      box: { token: "" },
+      orgo: { apiKey: "" },
       profile: { name: "Ada" },
     });
     // a saved value replaces the boot-time one; a cleared value drops it;
     // untouched sections change nothing
     expect(process.env.XAI_API_KEY).toBe("just-saved");
     expect(process.env.COMPOSIO_API_KEY).toBe("ak_just_saved");
-    expect(process.env.BOX_TOKEN).toBeUndefined();
+    expect(process.env.ORGO_API_KEY).toBeUndefined();
     expect(process.env.OMB_TTS_KEY).toBeUndefined();
   });
 
@@ -1013,7 +1010,7 @@ describe("workspace credential env strip", () => {
   it("covers in-process secrets and private app-state paths", () => {
     // These secrets have no per-driver ACP allowlist entry anywhere — they are
     // consumed in-process (Computer driver / voice module), never by a CLI
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("BOX_TOKEN");
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("ORGO_API_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_TTS_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_OPENAI_IMAGE_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_BROWSER_CONNECTION");

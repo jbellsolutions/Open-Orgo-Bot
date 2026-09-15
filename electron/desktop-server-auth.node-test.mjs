@@ -7,6 +7,7 @@ const { DESKTOP_MUTATION_HEADER, desktopServerHeaders } = authModule;
 const TOKEN = "a".repeat(43);
 
 test("adds the owner capability to packaged main-process mutations", () => {
+  assert.equal(DESKTOP_MUTATION_HEADER, "X-OpenMausBot-Desktop-Owner");
   assert.deepEqual(desktopServerHeaders(
     { "content-type": "application/json" },
     { packaged: true, token: TOKEN },

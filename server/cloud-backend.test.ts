@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  BOX_ACCOUNT_RESOURCES_ERROR,
+  ORGO_ACCOUNT_RESOURCES_ERROR,
   CLOUD_BACKEND_CHANGE_ERROR,
   VPS_ALIAS_CHANGE_ERROR,
   VPS_ALIAS_RESOURCES_ERROR,
-  boxAccountResourceChangeError,
+  orgoAccountResourceChangeError,
   cloudBackendChangeError,
   vpsAliasChangeError,
   vpsAliasResourceChangeError,
@@ -31,13 +31,13 @@ describe("cloud backend switching", () => {
     expect(vpsAliasChangeError("old-vps", "new-vps", false)).toBeNull();
   });
 
-  it("allows Box token rotation only when the replacement sees the same resources", () => {
-    const current = [{ boxId: "bx_23456789", name: "ogb-scope-bot-hash" }];
-    expect(boxAccountResourceChangeError(current, [...current])).toBeNull();
-    expect(boxAccountResourceChangeError(current, null)).toBe(BOX_ACCOUNT_RESOURCES_ERROR);
-    expect(boxAccountResourceChangeError(current, [{ ...current[0]!, boxId: "bx_3456789a" }]))
-      .toBe(BOX_ACCOUNT_RESOURCES_ERROR);
-    expect(boxAccountResourceChangeError([], null)).toBeNull();
+  it("allows Orgo token rotation only when the replacement sees the same resources", () => {
+    const current = [{ computerId: "bx_23456789", name: "ogb-scope-bot-hash" }];
+    expect(orgoAccountResourceChangeError(current, [...current])).toBeNull();
+    expect(orgoAccountResourceChangeError(current, null)).toBe(ORGO_ACCOUNT_RESOURCES_ERROR);
+    expect(orgoAccountResourceChangeError(current, [{ ...current[0]!, computerId: "bx_3456789a" }]))
+      .toBe(ORGO_ACCOUNT_RESOURCES_ERROR);
+    expect(orgoAccountResourceChangeError([], null)).toBeNull();
   });
 
   it("keeps an SSH alias attached while its VPS still has local computers", () => {

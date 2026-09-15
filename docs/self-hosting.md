@@ -1,4 +1,4 @@
-# Self-hosting the OpenMausBot server
+# Self-hosting the Open Orgo Bot server
 
 Run the harness server on an always-on Linux box (a VPS, a home server, a
 Mac mini in a closet) and pair browsers, the desktop app, or phones with it.
@@ -11,7 +11,7 @@ The npm CLI supports a managed public tunnel, Tailscale, or your own proxy.
 > network you trust, or an authenticated remote path below. Requests through
 > the managed tunnel or a correctly configured proxy require a paired session.
 
-Step by step, for a server you do not have yet: [Deploy OpenMausBot on a
+Step by step, for a server you do not have yet: [Deploy Open Orgo Bot on a
 VPS](deploy-vps.md) walks through the three ways in (public address, own
 domain, Tailscale), signing engines in, pairing, keeping it running,
 updating and backups. This page is the reference behind it.
@@ -204,7 +204,7 @@ Requirements: Docker with Compose, a DNS name pointing at the machine, and
 ports 80/443 open.
 
 ```sh
-git clone https://github.com/milind-soni/OpenMausBot && cd OpenMausBot/deploy
+git clone https://github.com/jbellsolutions/open-orgo-bot && cd open-orgo-bot/deploy
 cp .env.example .env            # set DOMAIN
 docker compose pull omb && docker compose up -d
 ```
@@ -252,7 +252,7 @@ Requirements: Node 24+, pnpm, and at least one agent CLI installed and
 signed in on the server.
 
 ```sh
-git clone https://github.com/milind-soni/OpenMausBot && cd OpenMausBot
+git clone https://github.com/jbellsolutions/open-orgo-bot && cd open-orgo-bot
 pnpm install
 
 # choose where data lives and start the server
@@ -485,7 +485,7 @@ in `config.json` under `signIn.admins` and `signIn.members` and can be changed
 through the settings API without a restart; the environment variables win
 when set, which is how a container or a service unit is bootstrapped.
 
-The code itself comes from `accounts.openmausbot.com`, the OpenMausBot
+The code itself comes from `accounts.openmausbot.com`, the Open Orgo Bot
 account service, so your server needs no email credentials. Your server asks
 it to send the code, checks the answer, and then issues its own session
 cookie: the browser only ever talks to your server, and who is welcome is

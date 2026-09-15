@@ -146,13 +146,13 @@ describe("surface parsing", () => {
   it("accepts only the four surfaces off the wire", () => {
     expect(parseSurface("browser")).toBe("browser");
     expect(parseSurface("cloud")).toBe("cloud");
-    expect(parseSurface("box")).toBeUndefined();
+    expect(parseSurface("orgo")).toBeUndefined();
     expect(parseSurface(42)).toBeUndefined();
     expect(parseSurface(undefined)).toBeUndefined();
   });
 
   it("folds both cloud backends into one surface", () => {
-    expect(surfaceOfComputerKind("box")).toBe("cloud");
+    expect(surfaceOfComputerKind("orgo")).toBe("cloud");
     expect(surfaceOfComputerKind("vps")).toBe("cloud");
     expect(surfaceOfComputerKind("vm")).toBe("vm");
     expect(surfaceOfComputerKind("local")).toBe("local");

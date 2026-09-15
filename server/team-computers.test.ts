@@ -65,7 +65,7 @@ describe("named team computer ownership", () => {
     const computer = registry.create("Shared desktop");
     registry.assign(computer.id, "Design");
     expect(registry.forBot({ section: "Design" })?.id).toBe(computer.id);
-    expect(registry.forBot({ section: "Design", cloudBackend: "box" })?.id).toBe(computer.id);
+    expect(registry.forBot({ section: "Design", cloudBackend: "orgo" })?.id).toBe(computer.id);
     for (const mode of ["cloud", "local", "vm", "off", "browser"]) {
       expect(registry.forBot({ section: "Design", computer: mode })).toBeUndefined();
     }
@@ -75,7 +75,7 @@ describe("named team computer ownership", () => {
 
   it("requires explicit cost and sharing acknowledgements at the API boundary", () => {
     expect(teamComputerCreate.safeParse({ requestId: randomUUID(), name: "One" }).success).toBe(false);
-    expect(teamComputerCreate.safeParse({ requestId: randomUUID(), name: "One", acknowledgeCost: true, boxId: "foreign" }).success).toBe(false);
+    expect(teamComputerCreate.safeParse({ requestId: randomUUID(), name: "One", acknowledgeCost: true, computerId: "foreign" }).success).toBe(false);
     expect(teamComputerCreate.safeParse({ requestId: randomUUID(), name: "One", acknowledgeCost: true }).success).toBe(true);
     expect(teamComputerAssignment.safeParse({ section: "Design" }).success).toBe(false);
     expect(teamComputerAssignment.safeParse({ section: null, acknowledgeSharedAccess: true }).success).toBe(true);

@@ -170,7 +170,7 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
   beforeAll(async () => {
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "omb-vps-routing-"));
-    mkdirSync(join(home, ".openmausbot"), { recursive: true });
+    mkdirSync(join(home, ".openorgobot"), { recursive: true });
     const fakeBin = join(home, "fakebin");
     mkdirSync(fakeBin, { recursive: true });
     gateFile = join(home, "turn.gate");
@@ -199,7 +199,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
     writeFileSync(dockerLog, "");
 
     writeFileSync(
-      join(home, ".openmausbot", "config.json"),
+      join(home, ".openorgobot", "config.json"),
       JSON.stringify({
         instances: {
           vps: {
@@ -355,7 +355,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
       expect(aliasChange.status).toBe(409);
       expect(aliasChange.body.error).toMatch(/active VPS turn/);
       // ...and neither can the bot's cloud backend
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "box" })).status).toBe(409);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "orgo" })).status).toBe(409);
 
       // open the gate: the echo settles carrying the FULL prompt
       writeFileSync(gateFile, "open");

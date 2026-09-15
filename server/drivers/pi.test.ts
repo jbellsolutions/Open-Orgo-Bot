@@ -104,13 +104,13 @@ describe("buildMcpServers", () => {
       threadId: "t",
       text: "hi",
       integrations: {
-        computer: { kind: "box", boxId: "b1", token: "tok", control: { url: "http://c", token: "ct" } },
+        computer: { kind: "orgo", computerId: "b1", apiKey: "tok", control: { url: "http://c", token: "ct" } },
       },
     });
     expect(servers?.computer).toMatchObject({
       command: process.execPath,
       args: [expect.stringContaining("computer-proxy")],
-      env: expect.objectContaining({ OGB_BOX_ID: "b1", OGB_BOX_TOKEN: "tok" }),
+      env: expect.objectContaining({ OOB_ORGO_COMPUTER_ID: "b1", OOB_ORGO_API_KEY: "tok" }),
     });
   });
 
@@ -412,9 +412,9 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump = join(dir, "dump.jsonl");
     // Plant a workspace credential on the harness process itself — the leak
     // path is `...process.env`, not just input.environment.
-    const savedBox = process.env.BOX_TOKEN;
+    const savedOrgo = process.env.ORGO_API_KEY;
     const savedXai = process.env.XAI_API_KEY;
-    process.env.BOX_TOKEN = "box-secret-value";
+    process.env.ORGO_API_KEY = "orgo-secret-value";
     process.env.XAI_API_KEY = "xai-secret-value";
     try {
       await create(undefined, {
@@ -424,8 +424,8 @@ describe("PiDriver turns (fake CLI)", () => {
       });
       await instance.dispose();
     } finally {
-      if (savedBox === undefined) delete process.env.BOX_TOKEN;
-      else process.env.BOX_TOKEN = savedBox;
+      if (savedOrgo === undefined) delete process.env.ORGO_API_KEY;
+      else process.env.ORGO_API_KEY = savedOrgo;
       if (savedXai === undefined) delete process.env.XAI_API_KEY;
       else process.env.XAI_API_KEY = savedXai;
     }
@@ -441,7 +441,7 @@ describe("PiDriver turns (fake CLI)", () => {
       expect(row.envConfigured).not.toContain("ANTHROPIC_API_KEY");
       expect(row.envConfigured).not.toContain("OPENAI_API_KEY");
       expect(row.envConfigured).not.toContain("XAI_API_KEY");
-      expect(row.envConfigured).not.toContain("BOX_TOKEN");
+      expect(row.envConfigured).not.toContain("ORGO_API_KEY");
     }
     expect(JSON.stringify(rows)).not.toContain("anthropic-secret-value");
     expect(JSON.stringify(rows)).not.toContain("openai-secret-value");
@@ -456,7 +456,7 @@ describe("PiDriver turns (fake CLI)", () => {
       text: "hi",
       integrations: {
         composio: { command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } },
-        computer: { kind: "box", boxId: "b1", token: "bt", control: { url: "http://c", token: "ct" } },
+        computer: { kind: "orgo", computerId: "b1", apiKey: "bt", control: { url: "http://c", token: "ct" } },
       },
     });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
@@ -478,8 +478,8 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(servers.composio).toMatchObject({ command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } });
     // the cloud computer wraps in the computer-proxy spawn contract
     expect(servers.computer.args[0]).toContain("computer-proxy");
-    expect(servers.computer.env).toMatchObject({ OGB_BOX_ID: "b1", OGB_BOX_TOKEN: "bt" });
-    // the box token lives in the 0600 config file, never in argv
+    expect(servers.computer.env).toMatchObject({ OOB_ORGO_COMPUTER_ID: "b1", OOB_ORGO_API_KEY: "bt" });
+    // the orgo token lives in the 0600 config file, never in argv
     expect(JSON.stringify(mcpRow!.argv)).not.toContain("bt");
   });
 

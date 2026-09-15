@@ -5,6 +5,7 @@ import { readSessionState, takePairingCodeFromLocation, takeInvitedEmailFromLoca
 import { bootstrapBrand } from "./lib/brand";
 import { applySkin, readSkin } from "./lib/skins";
 import { PairPage } from "./pair/PairPage";
+import { OrgoViewerPage } from "./orgo/OrgoViewerPage";
 import "./styles.css";
 
 // Before the first paint, not inside a component: stamping the skin during
@@ -18,6 +19,7 @@ applySkin(readSkin());
  * device"; on the owner's own machine the server trusts loopback and this
  * check is a single fast request. */
 async function chooseRoot(): Promise<React.ReactNode> {
+  if (location.pathname === "/orgo-viewer") return <OrgoViewerPage />;
   if (location.pathname === "/pair") return <PairPage initialCode={takePairingCodeFromLocation()} initialEmail={takeInvitedEmailFromLocation()} />;
   const session = await readSessionState();
   if (session.kind === "unauthenticated") return <PairPage initialCode={null} reason={session.error} />;

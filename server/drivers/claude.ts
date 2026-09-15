@@ -6,8 +6,8 @@
 //
 // Integrations become MCP servers on the CLI:
 //   - Composio Sessions (connected apps → tools) over streamable HTTP
-//   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
-//     — screenshot/exec/open_url, the CUA-on-the-box bridge
+//   - the bot's Orgo cloud computer via server/computer-proxy.ts
+//     — screenshot/exec/open_url, the CUA-on-Orgo bridge
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
@@ -175,7 +175,7 @@ function claudeEnvironment(
   }
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
-  // The harness process may hold workspace credentials (xai/box/voice keys,
+  // The harness process may hold workspace credentials (xai/Orgo/voice keys,
   // env-injected at boot); none of them are this CLI's to see.
   stripWorkspaceCredentialEnv(env);
   const applied = applyClaudeInject(env, model);
@@ -336,7 +336,7 @@ export function claudeCliUpdate(version: string | null, cli: string): ProviderSn
     title: "Update Claude Code for context controls",
     message:
       `Claude Code ${parsed.join(".")} predates ${floor}, so bots run without ${missing.join(", ")}: ` +
-      "no compaction window picked by OpenMausBot" +
+      "no compaction window picked by Open Orgo Bot" +
       (missing.includes("--setting-sources") ? ", and bots still see this machine's own Claude Code setup" : "") +
       ". Update it, then refresh Engines.",
     command: cli === "claude" ? "claude update" : `${cli} update`,
@@ -468,17 +468,17 @@ type AskBehavior = "allow" | "deny" | "answer";
 type AskResolutionSource = "user" | "timeout" | "system";
 
 const DENY_TIMEOUT_NOTE =
-  "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
-const QUESTION_TIMEOUT_NOTE = "OpenMausBot: nobody answered in time. Use your best judgment and continue.";
-const DUPLICATE_ASK_ID_NOTE = "OpenMausBot: duplicate ask id — skipping this request.";
+  "Open Orgo Bot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+const QUESTION_TIMEOUT_NOTE = "Open Orgo Bot: nobody answered in time. Use your best judgment and continue.";
+const DUPLICATE_ASK_ID_NOTE = "Open Orgo Bot: duplicate ask id — skipping this request.";
 
 /** The system-source reply for an ask that outlives the turn — used both to
  * drain in-flight `pending` asks on close() and to answer one that arrives
  * on an already-closed broker (see the `closed` branch below). */
 function systemEndedReply(kind: Ask["kind"]): { behavior: AskBehavior; message: string } {
   return kind === "question"
-    ? { behavior: "answer", message: "OpenMausBot: the turn is ending — wrap up." }
-    : { behavior: "deny", message: "OpenMausBot: the turn ended" };
+    ? { behavior: "answer", message: "Open Orgo Bot: the turn is ending — wrap up." }
+    : { behavior: "deny", message: "Open Orgo Bot: the turn ended" };
 }
 
 /** The structured questions behind an ask, when it is one. Claude's own
@@ -1111,7 +1111,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           env: local.env,
         };
         // The isolated Local VM preserves the established pre-allow behavior.
-        // Host tools always route through OpenMausBot's permission broker.
+        // Host tools always route through Open Orgo Bot's permission broker.
         if (!controlsHost) allowed.push("mcp__computer");
       }
       // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
@@ -1191,7 +1191,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG }, alwaysLoad: true };
       allowed.push("mcp__ogb");
       // The MCP config carries credentials — a Composio consumer key in a
-      // header, the box token in the computer proxy's env, the comms token in
+      // header, the Orgo key in the computer proxy's env, the comms token in
       // the agents proxy's env. On argv every one of those is world-readable
       // through `ps` for the life of the turn, to any local process. The CLI
       // accepts a FILE for this flag, so the secrets go in a 0600 file that
