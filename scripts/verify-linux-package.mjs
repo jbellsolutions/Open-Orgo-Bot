@@ -473,7 +473,7 @@ try {
   const desktop = readFileSync(desktopFile, "utf8");
   for (const expected of [
     "Name=Open Orgo Bot",
-    "Exec=/opt/Open Orgo Bot/open-orgo-bot %U",
+    'Exec="/opt/Open Orgo Bot/open-orgo-bot" %U',
     "Icon=open-orgo-bot",
     "StartupWMClass=ai.openorgobot.app",
     "Categories=Utility;",
