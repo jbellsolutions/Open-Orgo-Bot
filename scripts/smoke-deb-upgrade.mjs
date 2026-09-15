@@ -57,7 +57,7 @@ try {
     stdio: "inherit",
   });
   execFileSync("dpkg", ["--install", legacyDeb], { stdio: "inherit" });
-  for (const directory of ["/opt/OpenOrgoBot", "/opt/OpenOrgoBot/resources"]) {
+  for (const directory of ["/opt/Open Orgo Bot", "/opt/Open Orgo Bot/resources"]) {
     const mode = fs.lstatSync(directory).mode & 0o777;
     if (mode !== 0o775) fail(`legacy fixture did not reproduce 0775 at ${directory}`);
   }
@@ -69,6 +69,9 @@ try {
     env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" },
     stdio: "inherit",
   });
+  if (fs.existsSync("/opt/Open Orgo Bot")) {
+    fail("upgrade left the legacy space-containing application directory behind");
+  }
   for (const directory of [
     "/opt/OpenOrgoBot",
     "/opt/OpenOrgoBot/resources",
@@ -104,7 +107,7 @@ try {
     encoding: "utf8",
   }).trim();
   console.log(
-    `[smoke-deb-upgrade] OK: 0.1.7 legacy modes repaired by ${installedVersion} without weakening the runtime path`,
+    `[smoke-deb-upgrade] OK: 0.1.7 legacy layout migrated by ${installedVersion} to the sandbox-safe runtime path`,
   );
 } finally {
   fs.rmSync(temporary, { recursive: true, force: true });
