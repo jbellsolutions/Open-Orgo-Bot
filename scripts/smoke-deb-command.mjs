@@ -72,7 +72,7 @@ const installed = inContainer(
     prepare,
     command,
     'dpkg-query -W -f="INSTALLED=\\${Version} \\${db:Status-Abbrev}\\n" open-orgo-bot',
-    'test -x "/opt/Open Orgo Bot/open-orgo-bot" && echo "EXECUTABLE=yes"',
+    'test -x /opt/OpenOrgoBot/open-orgo-bot && echo "EXECUTABLE=yes"',
   ].join("\n"),
 );
 

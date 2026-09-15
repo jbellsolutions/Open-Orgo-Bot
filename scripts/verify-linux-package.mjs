@@ -435,7 +435,7 @@ for (const expected of [
 const extracted = mkdtempSync(path.join(tmpdir(), "omb-deb-verify-"));
 try {
   execFileSync("dpkg-deb", ["--extract", deb, extracted]);
-  const debAppRoot = path.join(extracted, "opt", "Open Orgo Bot");
+  const debAppRoot = path.join(extracted, "opt", "OpenOrgoBot");
   requireDirectoryMode(debAppRoot, 0o755);
   const debResources = path.join(debAppRoot, "resources");
   // Routes the in-app updater to the package-manager hand-off.
@@ -473,7 +473,7 @@ try {
   const desktop = readFileSync(desktopFile, "utf8");
   for (const expected of [
     "Name=Open Orgo Bot",
-    'Exec="/opt/Open Orgo Bot/open-orgo-bot" %U',
+    "Exec=/opt/OpenOrgoBot/open-orgo-bot %U",
     "Icon=open-orgo-bot",
     "StartupWMClass=ai.openorgobot.app",
     "Categories=Utility;",

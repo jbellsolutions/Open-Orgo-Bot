@@ -1,5 +1,9 @@
 appId: ai.openorgobot.app
-productName: Open Orgo Bot
+# electron-builder uses productName verbatim as the Linux /opt directory.
+# Chromium's setuid launcher cannot re-exec an Electron binary from a path
+# containing spaces, so keep this packaging identifier compact and set the
+# human-facing name explicitly on every platform below.
+productName: OpenOrgoBot
 copyright: Copyright © 2026 Open Orgo Bot contributors
 artifactName: Open-Orgo-Bot-${version}-${arch}.${ext}
 
@@ -81,6 +85,7 @@ extraResources:
     to: android-platform-tools
 
 mac:
+  executableName: Open Orgo Bot
   # Two single-arch artifacts rather than one universal binary: the app is
   # architecture-specific, and universal would make users download both halves.
   # electron-updater picks by filename (arm64-marked files on Apple silicon,
@@ -113,6 +118,8 @@ mac:
     - from: dist-native/browser/darwin-${arch}
       to: browser-engine
   extendInfo:
+    CFBundleDisplayName: Open Orgo Bot
+    CFBundleName: Open Orgo Bot
     NSMicrophoneUsageDescription: Open Orgo Bot uses the microphone for voice dictation into the composer.
     NSSpeechRecognitionUsageDescription: Open Orgo Bot transcribes your voice on-device to type messages for you.
     NSAccessibilityUsageDescription: Open Orgo Bot uses Accessibility when you let a bot control this Mac.
@@ -129,6 +136,7 @@ dmg:
   artifactName: Open-Orgo-Bot-${version}-${arch}.dmg
 
 win:
+  executableName: Open Orgo Bot
   target:
     - target: nsis
       arch: x64

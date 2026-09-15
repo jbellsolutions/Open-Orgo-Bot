@@ -39,7 +39,7 @@ There is no recording control in OMB's browser panel.
 ## Linux sandbox
 
 Use the `.deb` on Ubuntu 24.04. Its package hooks install a narrowly scoped
-AppArmor policy for the root-owned browser executable under `/opt/Open Orgo Bot`.
+AppArmor policy for the root-owned browser executable under `/opt/OpenOrgoBot`.
 They do not disable the browser sandbox or change the global user-namespace
 restriction. See [Linux desktop](linux-desktop.md).
 
@@ -65,7 +65,7 @@ node scripts/smoke-browser-bundle.mjs --resources /absolute/app/resources
 
 On macOS, use `/absolute/Open Orgo Bot.app/Contents/Resources`. On Linux, run as
 an unprivileged user against the installed `.deb` at
-`/opt/Open Orgo Bot/resources`. This check creates its own empty home and local
+`/opt/OpenOrgoBot/resources`. This check creates its own empty home and local
 web page, checks automatic discovery, navigation, typing/clicking, screenshot
 delivery and two-bot cookie/storage isolation, then removes only its fixture.
 No model account or user browser profile is used. Cross-target `--check-only`

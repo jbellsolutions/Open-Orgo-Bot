@@ -81,8 +81,8 @@ On Windows, use the installed `Open Orgo Bot.exe` as `command`, the adjacent
 `resources\\server\\mcp-server.js` as the argument, and the same `ELECTRON_RUN_AS_NODE=1` environment value.
 The usual per-user install is under `%LOCALAPPDATA%\\Programs\\Open Orgo Bot`.
 
-On Ubuntu `.deb` installs, the executable is normally `/opt/Open Orgo Bot/openmausbot` and the script is
-`/opt/Open Orgo Bot/resources/server/mcp-server.js`. Use the same environment value.
+On Ubuntu `.deb` installs, the executable is normally `/opt/OpenOrgoBot/open-orgo-bot` and the script is
+`/opt/OpenOrgoBot/resources/server/mcp-server.js`. Use the same environment value.
 
 ## Connection discovery
 

@@ -33,7 +33,7 @@ const executables = [
   path.join(root, "release", appImage),
 ];
 if (process.env.OMB_SMOKE_INSTALLED_DEB === "1") {
-  executables.push("/opt/Open Orgo Bot/open-orgo-bot");
+  executables.push("/opt/OpenOrgoBot/open-orgo-bot");
 }
 
 for (const executable of executables) {
