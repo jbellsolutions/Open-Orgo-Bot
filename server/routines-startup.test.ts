@@ -130,7 +130,10 @@ it("recovers queued/due work without resurrecting an interrupted routine after r
     expect(runs.filter(run => run.routineId === cron.id && run.scheduledFor < Math.floor(Date.now() / 60_000) * 60_000)).toHaveLength(1);
     const restoredCron = (await api("GET", "/api/routines")).routines.find((routine: { id: string }) => routine.id === cron.id);
     expect(restoredCron.schedule).toEqual(cron.schedule);
-    expect(restoredCron.nextRunAt).toBeGreaterThan(Date.now());
+    // A minute-aligned cron cursor may become due between the API read and
+    // this assertion on slow runners. It must not remain on an older minute;
+    // the scheduler's next tick will advance a cursor due in this one.
+    expect(restoredCron.nextRunAt).toBeGreaterThanOrEqual(Math.floor(Date.now() / 60_000) * 60_000);
     const recoveredPeer = (await api("GET", "/api/bots")).bots.find((bot: { id: string }) => bot.id === orphanPeer.id);
     expect(recoveredPeer.messages.some((message: { role: string }) => message.role === "user")).toBe(false);
     expect(Boolean(recoveredPeer.busy)).toBe(false);

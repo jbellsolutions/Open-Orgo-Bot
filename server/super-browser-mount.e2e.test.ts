@@ -30,7 +30,7 @@ function bundleFixture(): string {
   return root;
 }
 
-it("mounts the verified Super Browser router without handing it an unpinned Orgo key", async () => {
+it.skipIf(process.platform === "win32")("mounts the verified Super Browser router without handing it an unpinned Orgo key", async () => {
   const bundle = bundleFixture();
   const fixture = await launchVerificationServer({
     ...process.env,

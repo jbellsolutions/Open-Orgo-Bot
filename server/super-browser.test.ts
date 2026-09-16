@@ -50,8 +50,8 @@ afterEach(() => {
 describe("Super Browser bridge", () => {
   it("verifies an installed bundle and exposes only non-secret status", () => {
     const root = fixture();
-    expect(inspectSuperBrowserRoot(root)).toMatchObject({ available: true, verified: true, version: "0.3.2", source: "override" });
-    expect(superBrowserSummary({ env: { OOB_SUPER_BROWSER_ROOT: root }, home: join(root, "empty") })).toEqual({
+    expect(inspectSuperBrowserRoot(root, "override", "linux")).toMatchObject({ available: true, verified: true, version: "0.3.2", source: "override" });
+    expect(superBrowserSummary({ env: { OOB_SUPER_BROWSER_ROOT: root }, home: join(root, "empty"), platform: "linux" })).toEqual({
       available: true,
       verified: true,
       version: "0.3.2",
@@ -59,16 +59,24 @@ describe("Super Browser bridge", () => {
     });
   });
 
+  it("fails closed on Windows until the installed MCP launcher supports it", () => {
+    expect(inspectSuperBrowserRoot(fixture(), "override", "win32")).toEqual({
+      available: false,
+      source: "override",
+      reason: "Super Browser's installed MCP launcher currently requires macOS or Linux.",
+    });
+  });
+
   it("fails closed when a manifest-covered runtime file changes or redirects through a symlink", () => {
     const root = fixture();
     writeFileSync(join(root, "src", "super_browser", "mcp_server.py"), "print('tampered')\n");
-    expect(inspectSuperBrowserRoot(root)).toMatchObject({ available: false, reason: expect.stringMatching(/failed bundle verification/) });
+    expect(inspectSuperBrowserRoot(root, "override", "linux")).toMatchObject({ available: false, reason: expect.stringMatching(/failed bundle verification/) });
 
     const linked = fixture();
     const entrypoint = join(linked, "mcp", "super-browser-server");
     rmSync(entrypoint);
     symlinkSync("/bin/echo", entrypoint);
-    expect(inspectSuperBrowserRoot(linked)).toMatchObject({ available: false, reason: expect.stringMatching(/symbolic link/) });
+    expect(inspectSuperBrowserRoot(linked, "override", "linux")).toMatchObject({ available: false, reason: expect.stringMatching(/symbolic link/) });
   });
 
   it("treats an explicit invalid root as authoritative", () => {
@@ -79,12 +87,12 @@ describe("Super Browser bridge", () => {
     const installed = fixture();
     mkdirSync(join(goodHome, ".codex", "skills"), { recursive: true });
     symlinkSync(installed, join(goodHome, ".codex", "skills", "super-browser"));
-    expect(discoverSuperBrowser({ env: { OOB_SUPER_BROWSER_ROOT: bad }, home: goodHome })).toMatchObject({ available: false, source: "override" });
+    expect(discoverSuperBrowser({ env: { OOB_SUPER_BROWSER_ROOT: bad }, home: goodHome, platform: "linux" })).toMatchObject({ available: false, source: "override" });
   });
 
   it("pins Super Browser to the already-managed Orgo and never supplies an unpinned key", () => {
     const root = fixture();
-    const installation = inspectSuperBrowserRoot(root);
+    const installation = inspectSuperBrowserRoot(root, "override", "linux");
     const pinned = superBrowserMcpServer({
       installation,
       dataDir: join(root, "data"),
