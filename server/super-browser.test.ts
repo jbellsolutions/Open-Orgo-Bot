@@ -75,7 +75,7 @@ describe("Super Browser bridge", () => {
     const linked = fixture();
     const entrypoint = join(linked, "mcp", "super-browser-server");
     rmSync(entrypoint);
-    symlinkSync("/bin/echo", entrypoint);
+    symlinkSync(join(linked, "src", "super_browser", "mcp_server.py"), entrypoint);
     expect(inspectSuperBrowserRoot(linked, "override", "linux")).toMatchObject({ available: false, reason: expect.stringMatching(/symbolic link/) });
   });
 
