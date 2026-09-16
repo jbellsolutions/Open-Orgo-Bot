@@ -112,6 +112,7 @@ type Phase =
   | "show-ready-orgo"
   | "show-sleeping-orgo"
   | "show-pending-orgo"
+  | "orgo-selection-required"
   | "browser"
   | "off"
   | "error";
@@ -617,6 +618,10 @@ export function ComputerPanel({
           setPhase(action);
           return;
         }
+        if (status.selectionRequired === true) {
+          setPhase("orgo-selection-required");
+          return;
+        }
         setPhase("starting");
         return api(`/api/bots/${bot.id}/computer/provision`, { method: "POST" }).then((r) => {
           if (!alive) return;
@@ -1088,6 +1093,7 @@ export function ComputerPanel({
     "show-ready-orgo": t("computer.phase.showReadyOrgo"),
     "show-sleeping-orgo": t("computer.phase.showSleepingOrgo"),
     "show-pending-orgo": t("computer.phase.showPendingOrgo"),
+    "orgo-selection-required": "Choose one of your existing Orgo computers below. No new computer will be created.",
     "vps-unconfigured": t("computer.phase.vpsUnconfigured"),
     "vps-incompatible": t("computer.phase.vpsIncompatible"),
     "vps-stopped": t("computer.phase.vpsStopped"),

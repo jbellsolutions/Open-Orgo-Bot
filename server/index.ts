@@ -3643,6 +3643,49 @@ function managedOrgoOwners(): orgo.ManagedOrgoOwner[] {
   }))];
 }
 
+const ORGO_EXISTING_COMPUTER_SELECTION_ERROR =
+  "Choose one of your existing Orgo computers below. Open Orgo Bot will not create another computer while an unassigned computer is available.";
+
+async function orgoSelectionRequirement(bot: BotRecord): Promise<{
+  selectionRequired: boolean;
+  availableComputerCount: number;
+  problem: string | null;
+}> {
+  if (bot.orgoComputerId) {
+    return { selectionRequired: false, availableComputerCount: 0, problem: null };
+  }
+  const inventory = await orgo.listAssignableOrgos(cfg, managedOrgoOwners());
+  if (!inventory.available) {
+    return {
+      selectionRequired: false,
+      availableComputerCount: 0,
+      problem: inventory.problem ?? "Orgo computer inventory is unavailable",
+    };
+  }
+  // A legacy app-managed computer already belongs to this bot by its scoped
+  // provider name. It remains safe for the idempotent provision path to wake
+  // or reuse it even before the bot has an explicit provider UUID persisted.
+  if (inventory.instances.some((instance) => instance.ownerBotId === bot.id)) {
+    return { selectionRequired: false, availableComputerCount: 0, problem: null };
+  }
+  const availableComputerCount = inventory.instances.filter((instance) => instance.available).length;
+  return {
+    selectionRequired: availableComputerCount > 0,
+    availableComputerCount,
+    problem: null,
+  };
+}
+
+async function assertOrgoCreationDoesNotBypassExistingComputers(bot: BotRecord): Promise<void> {
+  const requirement = await orgoSelectionRequirement(bot);
+  if (requirement.problem) {
+    throw Object.assign(new Error(requirement.problem), { status: 503 });
+  }
+  if (requirement.selectionRequired) {
+    throw Object.assign(new Error(ORGO_EXISTING_COMPUTER_SELECTION_ERROR), { status: 409 });
+  }
+}
+
 function botHasActiveTurn(botId: string): boolean {
   const bot = store.bot(botId);
   return bot?.busy === true ||
@@ -5612,6 +5655,7 @@ async function startTurn(
           state: typeof b?.state === "string" ? b.state : null,
         });
         if (lifecycle === "provision") {
+          await assertOrgoCreationDoesNotBypassExistingComputers(bot);
           broadcast({ kind: "computer", botId: bot.id, state: "provisioning" });
           await orgo.provisionOrgo(cfg, bot.id, bot.name, bot.orgoComputerId);
           b = await orgo.findOrgo(cfg, bot.id, bot.orgoComputerId).catch(() => null);
@@ -16195,9 +16239,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (!bot) return json(res, 404, { error: "no such bot" });
       const teamComputer = inheritedTeamComputer(bot);
       if (teamComputer) return json(res, 200, { backend: "orgo", teamComputer: { id: teamComputer.id, name: teamComputer.name }, ...(await orgo.orgoStatus(cfg, teamComputerOwner(teamComputer.id))) });
-      return bot.cloudBackend === "vps"
-        ? json(res, 200, { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) })
-        : json(res, 200, { backend: "orgo", ...(await orgo.orgoStatus(cfg, bot.id, bot.orgoComputerId)) });
+      if (bot.cloudBackend === "vps") {
+        return json(res, 200, { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) });
+      }
+      const status = await orgo.orgoStatus(cfg, bot.id, bot.orgoComputerId);
+      if (bot.computer !== "cloud" || !status.configured || status.computer || bot.orgoComputerId) {
+        return json(res, 200, { backend: "orgo", ...status });
+      }
+      const selection = await orgoSelectionRequirement(bot);
+      return json(res, 200, { backend: "orgo", ...status, ...selection });
     }
     // Who is driving this bot's computer. GET is the panel's initial read;
     // POST take/release/dismiss-help are the person's three moves. The bot
@@ -16358,6 +16408,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       try {
         switch (m[2]) {
           case "provision":
+            await assertOrgoCreationDoesNotBypassExistingComputers(bot);
             return json(res, 200, await orgo.provisionOrgo(cfg, botId, bot.name, bot.orgoComputerId));
           case "join":
             return json(res, 200, await (activeOrgoTurn ? orgo.joinReadyOrgo(cfg, botId, bot.orgoComputerId) : orgo.joinOrgo(cfg, botId, bot.orgoComputerId)));

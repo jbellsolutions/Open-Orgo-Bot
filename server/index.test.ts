@@ -2718,6 +2718,22 @@ describe("harness HTTP API", () => {
       expect(listed.body.instances).toHaveLength(4);
       expect(listed.body.instances[0]).toMatchObject({ computerId, ownerBotId: null, available: true });
 
+      expect((await api("PATCH", `/api/bots/${first.id}`, {
+        computer: "cloud",
+        cloudBackend: "orgo",
+      })).status).toBe(200);
+      const statusBeforeChoice = await api("GET", `/api/bots/${first.id}/computer`);
+      expect(statusBeforeChoice.status).toBe(200);
+      expect(statusBeforeChoice.body).toMatchObject({
+        selectionRequired: true,
+        availableComputerCount: 4,
+      });
+      boxRouteCalls.length = 0;
+      const refusedCreate = await api("POST", `/api/bots/${first.id}/computer/provision`, {});
+      expect(refusedCreate.status).toBe(409);
+      expect(refusedCreate.body.error).toMatch(/choose one of your existing Orgo computers/i);
+      expect(boxRouteCalls.some((call) => call.method === "POST" && call.path === "/computers")).toBe(false);
+
       const assigned = await api("PATCH", `/api/bots/${first.id}`, {
         orgoComputerId: computerId,
         computer: "cloud",

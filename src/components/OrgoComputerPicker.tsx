@@ -40,6 +40,8 @@ export function OrgoComputerPicker({
   }, [bot.id, bot.orgoComputerId]);
 
   const unavailable = !inventory?.configured || inventory.available === false;
+  const availableCount = inventory?.instances.filter((computer) => computer.available).length ?? 0;
+  const requiresExistingChoice = !bot.orgoComputerId && availableCount > 0;
   return (
     <div className={compact ? "mt-2" : "mt-3 rounded-lg bg-inset px-3 py-2.5"}>
       <label className="block text-[12px] font-medium text-ink" htmlFor={`orgo-computer-${bot.id}`}>
@@ -56,7 +58,11 @@ export function OrgoComputerPicker({
         })}
         className="mt-1.5 w-full rounded-lg border border-hairline/50 bg-card px-2.5 py-2 text-[12px] text-ink disabled:opacity-50"
       >
-        <option value="">Automatic private computer</option>
+        <option value="" disabled={requiresExistingChoice}>
+          {requiresExistingChoice
+            ? `Choose one of ${availableCount} available computers…`
+            : "Automatic private computer"}
+        </option>
         {(inventory?.instances ?? []).map((computer) => {
           const ownedHere = computer.ownerBotId === bot.id;
           const assignedElsewhere = Boolean(computer.ownerBotId) && !ownedHere;
@@ -73,7 +79,13 @@ export function OrgoComputerPicker({
       <div className="mt-1 text-[11px] leading-4 text-ink-secondary" aria-live="polite">
         {bot.busy
           ? "Stop this agent before changing its screen."
-          : error ?? inventory?.problem ?? (!inventory ? "Loading Orgo computers…" : !inventory.configured ? "Connect Orgo in App Settings first." : "Each computer can be assigned to only one agent.")}
+          : error ?? inventory?.problem ?? (!inventory
+            ? "Loading Orgo computers…"
+            : !inventory.configured
+              ? "Connect Orgo in App Settings first."
+              : requiresExistingChoice
+                ? "Select an existing computer. Open Orgo Bot will not create another one."
+                : "Each computer can be assigned to only one agent.")}
       </div>
     </div>
   );
