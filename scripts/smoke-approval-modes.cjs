@@ -225,7 +225,9 @@ app.whenReady().then(async () => {
         const text = settled.messages.slice(before).map((message) => message.text ?? "").join("\n");
         assert.match(text, /list_bots:/);
         assert.match(text, /session_search:/);
-        assert.equal((text.match(/list_bots:/g) ?? []).length, 2, "Repeated reads complete without another prompt");
+        // session_search may quote a prior result that contains the literal
+        // "list_bots:". Count only the two top-level fixture result lines.
+        assert.equal((text.match(/^list_bots:/gm) ?? []).length, 2, "Repeated reads complete without another prompt");
       } else {
         const card = await until(async () => pendingCard((await api("/api/bots")).body.bots.find((candidate) => candidate.id === bot.id)));
         assert.equal((await api(`/api/bots/${bot.id}/respond`, "POST", { requestId: card.requestId, behavior: "deny" })).status, 200);
