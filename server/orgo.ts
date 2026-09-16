@@ -47,6 +47,9 @@ export interface ManagedOrgoOwner {
   botId: string;
   name: string;
   inUse: boolean;
+  /** A user-selected existing Orgo computer. When present, identity is by
+   * provider UUID rather than the app's legacy generated machine name. */
+  computerId?: string;
 }
 
 export interface ManagedOrgoInventoryInstance {
@@ -64,6 +67,22 @@ export interface ManagedOrgoInventory {
   available: boolean;
   problem: string | null;
   instances: ManagedOrgoInventoryInstance[];
+}
+
+export interface AssignableOrgoInventoryInstance {
+  computerId: string;
+  name: string;
+  state: string;
+  ownerBotId: string | null;
+  ownerName: string | null;
+  available: boolean;
+}
+
+export interface AssignableOrgoInventory {
+  configured: boolean;
+  available: boolean;
+  problem: string | null;
+  instances: AssignableOrgoInventoryInstance[];
 }
 
 export interface OrgoIdentityInspection {
@@ -242,10 +261,14 @@ export async function listManagedOrgos(cfg: AppConfig, owners: ManagedOrgoOwner[
   if (!orgoConfigured(cfg)) return { configured: false, available: true, problem: null, instances: [] };
   try {
     const computers = await allComputers(cfg);
-    const expected = new Map<string, ManagedOrgoOwner>();
-    for (const owner of owners) expected.set(await orgoNameFor(owner.botId), owner);
+    const expectedById = new Map(owners.filter((owner) => UUID.test(owner.computerId ?? "")).map((owner) => [owner.computerId!.toLowerCase(), owner]));
+    const expectedByName = new Map<string, ManagedOrgoOwner>();
+    for (const owner of owners) if (!owner.computerId) expectedByName.set(await orgoNameFor(owner.botId), owner);
+    // Settings lifecycle actions only own app-created machines. A selected
+    // external computer is usable by its agent but must never become eligible
+    // for app deletion merely because it was assigned here.
     const instances = computers.filter((computer) => computer.name.startsWith(scopedPrefix())).map((computer) => {
-      const owner = expected.get(computer.name) ?? null;
+      const owner = expectedById.get(computer.id.toLowerCase()) ?? expectedByName.get(computer.name) ?? null;
       if (owner) {
         computerIdCache.set(owner.botId, computer.id);
         adoptResolvedOrgo(owner.botId, computer.id);
@@ -258,6 +281,37 @@ export async function listManagedOrgos(cfg: AppConfig, owners: ManagedOrgoOwner[
         ownerName: owner?.name ?? null,
         orphaned: owner === null,
         inUse: owner?.inUse ?? false,
+      };
+    });
+    return { configured: true, available: true, problem: null, instances };
+  } catch (error) {
+    return { configured: true, available: false, problem: error instanceof Error ? error.message : "Could not list Orgo computers", instances: [] };
+  }
+}
+
+/** Every computer visible to the configured Orgo account, including machines
+ * created outside this app. This is read-only inventory for the per-agent
+ * picker; lifecycle deletion remains limited to app-owned machines. */
+export async function listAssignableOrgos(cfg: AppConfig, owners: ManagedOrgoOwner[]): Promise<AssignableOrgoInventory> {
+  cfg = snapshotConfig(cfg);
+  if (!orgoConfigured(cfg)) return { configured: false, available: true, problem: null, instances: [] };
+  try {
+    const computers = await allComputers(cfg);
+    const ownerById = new Map<string, ManagedOrgoOwner>();
+    const ownerByName = new Map<string, ManagedOrgoOwner>();
+    for (const owner of owners) {
+      if (UUID.test(owner.computerId ?? "")) ownerById.set(owner.computerId!.toLowerCase(), owner);
+      else ownerByName.set(await orgoNameFor(owner.botId), owner);
+    }
+    const instances = computers.map((computer) => {
+      const owner = ownerById.get(computer.id.toLowerCase()) ?? ownerByName.get(computer.name) ?? null;
+      return {
+        computerId: computer.id,
+        name: computer.name,
+        state: computer.status,
+        ownerBotId: owner?.botId ?? null,
+        ownerName: owner?.name ?? null,
+        available: owner === null,
       };
     });
     return { configured: true, available: true, problem: null, instances };
@@ -281,9 +335,21 @@ export async function inspectOrgoIdentity(cfg: AppConfig, computerId: string): P
   }
 }
 
-export async function findOrgo(cfg: AppConfig, botId: string): Promise<OrgoComputer | null> {
+export async function findOrgo(cfg: AppConfig, botId: string, assignedComputerId?: string): Promise<OrgoComputer | null> {
   cfg = snapshotConfig(cfg);
   if (!orgoConfigured(cfg)) return null;
+  if (assignedComputerId) {
+    if (!UUID.test(assignedComputerId)) return null;
+    const computer = await getComputer(cfg, assignedComputerId);
+    if (computer) {
+      computerIdCache.set(botId, computer.id);
+    } else {
+      computerIdCache.delete(botId);
+    }
+    // A pinned assignment is fail-closed: never substitute a similarly named
+    // machine or create a second billable computer when it disappears.
+    return computer;
+  }
   const cached = computerIdCache.get(botId);
   if (cached) {
     const result = await orgoJson(cfg, `/computers/${cached}`);
@@ -321,9 +387,9 @@ async function waitRunning(cfg: AppConfig, computerId: string, budgetMs = 90_000
   return null;
 }
 
-export async function readyOrgo(cfg: AppConfig, botId: string, budgetMs = 60_000): Promise<OrgoComputer | null> {
+export async function readyOrgo(cfg: AppConfig, botId: string, budgetMs = 60_000, assignedComputerId?: string): Promise<OrgoComputer | null> {
   cfg = snapshotConfig(cfg);
-  const computer = await findOrgo(cfg, botId);
+  const computer = await findOrgo(cfg, botId, assignedComputerId);
   return computer ? waitRunning(cfg, computer.id, budgetMs) : null;
 }
 
@@ -421,16 +487,23 @@ function desktopUrl(computer: OrgoComputer): string {
   return url.toString();
 }
 
-export async function orgoStatus(cfg: AppConfig, botId: string) {
+export async function orgoStatus(cfg: AppConfig, botId: string, assignedComputerId?: string) {
   cfg = snapshotConfig(cfg);
   if (!orgoConfigured(cfg)) return { configured: false, computer: null };
-  const computer = await findOrgo(cfg, botId);
+  const computer = await findOrgo(cfg, botId, assignedComputerId);
   return { configured: true, computer: computer ? { computerId: computer.id, state: computer.status, desktopAvailable: Boolean(computer.connection_url) } : null };
 }
 
-export async function provisionOrgo(cfg: AppConfig, botId: string, _botName: string) {
+export async function provisionOrgo(cfg: AppConfig, botId: string, _botName: string, assignedComputerId?: string) {
   cfg = snapshotConfig(cfg);
   if (!orgoConfigured(cfg)) throw new Error("Orgo is not connected — add an Orgo API key in App Settings");
+  if (assignedComputerId) {
+    const assigned = await findOrgo(cfg, botId, assignedComputerId);
+    if (!assigned) throw Object.assign(new Error("the assigned Orgo computer is no longer accessible — choose another computer"), { status: 404 });
+    const ready = await waitRunning(cfg, assigned.id);
+    if (!ready) throw new Error("Orgo computer did not become ready in time");
+    return { computerId: ready.id, machineName: ready.name, reused: true, state: ready.status, joinUrl: desktopUrl(ready) };
+  }
   const name = await orgoNameFor(botId);
   const created = await createOrgo(cfg, botId, name);
   const ready = await waitRunning(cfg, created.computer.id);
@@ -438,18 +511,18 @@ export async function provisionOrgo(cfg: AppConfig, botId: string, _botName: str
   return { computerId: ready.id, machineName: name, reused: !created.created, state: ready.status, joinUrl: desktopUrl(ready) };
 }
 
-export async function joinOrgo(cfg: AppConfig, botId: string) {
+export async function joinOrgo(cfg: AppConfig, botId: string, assignedComputerId?: string) {
   cfg = snapshotConfig(cfg);
-  const computer = await findOrgo(cfg, botId);
+  const computer = await findOrgo(cfg, botId, assignedComputerId);
   if (!computer) throw new Error("no computer yet — provision it first");
   const ready = await waitRunning(cfg, computer.id);
   if (!ready) throw new Error("the Orgo computer did not wake in time");
   return { joinUrl: desktopUrl(ready), state: ready.status };
 }
 
-export async function joinReadyOrgo(cfg: AppConfig, botId: string) {
+export async function joinReadyOrgo(cfg: AppConfig, botId: string, assignedComputerId?: string) {
   cfg = snapshotConfig(cfg);
-  const computer = await findOrgo(cfg, botId);
+  const computer = await findOrgo(cfg, botId, assignedComputerId);
   if (!computer) throw Object.assign(new Error("no computer yet — provision it first"), { status: 409 });
   if (!READY.has(computer.status)) throw Object.assign(new Error("the cloud computer is sleeping or starting — interrupt the bot before waking it"), { status: 409 });
   const fresh = await getComputer(cfg, computer.id);
@@ -457,8 +530,8 @@ export async function joinReadyOrgo(cfg: AppConfig, botId: string) {
   return { joinUrl: desktopUrl(fresh), state: fresh.status };
 }
 
-export async function sleepOrgo(cfg: AppConfig, botId: string) {
-  const computer = await findOrgo(cfg, botId);
+export async function sleepOrgo(cfg: AppConfig, botId: string, assignedComputerId?: string) {
+  const computer = await findOrgo(cfg, botId, assignedComputerId);
   if (!computer) throw new Error("no computer for this bot");
   const result = await orgoJson(snapshotConfig(cfg), `/computers/${computer.id}/stop`, { method: "POST", body: "{}" }, false);
   if (!result.ok) throw Object.assign(new Error(orgoErrorMessage(result.status, "computer stop", result.body)), { status: result.status });
@@ -466,8 +539,8 @@ export async function sleepOrgo(cfg: AppConfig, botId: string) {
   return { ok: true };
 }
 
-export async function execOnOrgo(cfg: AppConfig, botId: string, command: string) {
-  const computer = await readyOrgo(cfg, botId);
+export async function execOnOrgo(cfg: AppConfig, botId: string, command: string, assignedComputerId?: string) {
+  const computer = await readyOrgo(cfg, botId, 60_000, assignedComputerId);
   if (!computer) throw new Error("no ready Orgo computer for this bot");
   const out = await runCommand(cfg, computer.id, isolatedRemoteCommand(command));
   return { exitCode: out.exitCode, stdout: out.stdout.slice(-4_000), stderr: out.stderr.slice(-2_000) };
@@ -482,4 +555,8 @@ export async function screenshotOrgo(cfg: AppConfig, botId: string, knownCompute
   const image = result.body?.image ?? result.body?.data;
   if (!result.ok || typeof image !== "string" || !image) throw new Error(orgoErrorMessage(result.status, "screenshot", result.body));
   return { png: image.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, ""), format: "jpeg" };
+}
+
+export function forgetOrgo(botId: string): void {
+  computerIdCache.delete(botId);
 }

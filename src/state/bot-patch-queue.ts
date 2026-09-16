@@ -35,6 +35,8 @@ export type BotUpdatePatch = Partial<
   /** null is the wire representation for clearing an explicit destination
    * and returning to Auto. Bot state itself keeps Auto as an absent field. */
   computer?: Bot["computer"] | null;
+  /** null clears the exact Orgo assignment and returns to automatic. */
+  orgoComputerId?: string | null;
   /** Rides the PATCH body only: the server's proof that the local-auto
    * warning dialog was shown (see server/index.ts's consent gate). It must
    * reach the wire inside the coalesced body and must never fold into bot
@@ -49,9 +51,10 @@ export type BotUpdatePatch = Partial<
 /** A wire patch after clear-only values have been normalized for Bot state. */
 export type BotStatePatch = Omit<
   BotUpdatePatch,
-  "computer" | "acknowledgeLocalAuto" | "confirmFullAccess"
+  "computer" | "orgoComputerId" | "acknowledgeLocalAuto" | "confirmFullAccess"
 > & {
   computer?: Bot["computer"];
+  orgoComputerId?: string;
 };
 
 interface BotPatchQueueEntry {
@@ -107,10 +110,13 @@ const stateOverlay = (patch: BotUpdatePatch): BotStatePatch => {
     acknowledgeLocalAuto: _localAck,
     confirmFullAccess: _fullConfirmation,
     computer,
+    orgoComputerId,
     ...fields
   } = patch;
-  if (computer === null) return { ...fields, computer: undefined };
-  return computer === undefined ? fields : { ...fields, computer };
+  const normalized = orgoComputerId === null ? { ...fields, orgoComputerId: undefined } :
+    orgoComputerId === undefined ? fields : { ...fields, orgoComputerId };
+  if (computer === null) return { ...normalized, computer: undefined };
+  return computer === undefined ? normalized : { ...normalized, computer };
 };
 
 /**

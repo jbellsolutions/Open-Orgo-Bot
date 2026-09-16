@@ -36,6 +36,7 @@ import { usePageVisible } from "@/lib/page-visible";
 import { CloudScreenPreview } from "./CloudScreenPreview";
 import { isActiveTurnRefusal, isRemoteScreenshotContention } from "@/lib/remote-desktop";
 import { CloudBackendPicker } from "./CloudBackendPicker";
+import { OrgoComputerPicker } from "./OrgoComputerPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { RoutinesSection } from "./bot-settings/RoutinesSection";
 import { routineRunLabel, routineRunTone } from "@/lib/routine-display";
@@ -197,12 +198,14 @@ export function ComputerPanel({
     botId: string;
     computer: Bot["computer"];
     cloudBackend: CloudBackend;
+    orgoComputerId?: string;
     section: string;
   } | null>(null);
   const [resolvedComputerSelection, setResolvedComputerSelection] = useState<{
     botId: string;
     computer: Bot["computer"];
     cloudBackend: CloudBackend;
+    orgoComputerId?: string;
   } | null>(null);
   const [teamComputer, setTeamComputer] = useState<{
     id: string; name: string; botId: string; section: string;
@@ -213,13 +216,15 @@ export function ComputerPanel({
       && persistedComputerSelection.botId === bot.id
       && persistedComputerSelection.computer === bot.computer
       && persistedComputerSelection.cloudBackend === cloudBackend
+      && persistedComputerSelection.orgoComputerId === bot.orgoComputerId
       && persistedComputerSelection.section === (bot.section?.trim() ?? ""),
   );
   const computerStatusCurrent = Boolean(
     resolvedComputerSelection
       && resolvedComputerSelection.botId === bot.id
       && resolvedComputerSelection.computer === bot.computer
-      && resolvedComputerSelection.cloudBackend === cloudBackend,
+      && resolvedComputerSelection.cloudBackend === cloudBackend
+      && resolvedComputerSelection.orgoComputerId === bot.orgoComputerId,
   );
   const currentTeamComputer = computerStatusCurrent && bot.computer === undefined && cloudBackend === "orgo"
     && teamComputer?.botId === bot.id && teamComputer.section === (bot.section?.trim() ?? "")
@@ -236,6 +241,7 @@ export function ComputerPanel({
   const updateComputerSelection = useCallback((patch: {
     computer?: Bot["computer"] | null;
     cloudBackend?: CloudBackend;
+    orgoComputerId?: string | null;
     browser?: boolean;
     acknowledgeLocalAuto?: boolean;
   }) => {
@@ -256,18 +262,20 @@ export function ComputerPanel({
         cloudBackend,
         persistedBot,
       })) return;
+      if (persistedBot && persistedBot.orgoComputerId !== bot.orgoComputerId) return;
       if (persistedBot && (persistedBot.section?.trim() ?? "") !== (bot.section?.trim() ?? "")) return;
       setPersistedComputerSelection({
         botId: bot.id,
         computer: bot.computer,
         cloudBackend,
+        orgoComputerId: bot.orgoComputerId,
         section: bot.section?.trim() ?? "",
       });
     });
     return () => {
       alive = false;
     };
-  }, [bot.id, bot.computer, bot.section, cloudBackend, flushBotPatches]);
+  }, [bot.id, bot.computer, bot.orgoComputerId, bot.section, cloudBackend, flushBotPatches]);
   const [orgoState, setOrgoState] = useState<string | null>(null);
   const [polledFrame, setPolledFrame] = useState<{ png: string; mime: string } | null>(null);
   const [previewError, setPreviewError] = useState<Error | string | null>(null);
@@ -495,6 +503,7 @@ export function ComputerPanel({
             botId: bot.id,
             computer: bot.computer,
             cloudBackend,
+            orgoComputerId: bot.orgoComputerId,
           });
           if (!status.configured) {
             if (autoLocal) setPhase("local");
@@ -528,6 +537,7 @@ export function ComputerPanel({
                   botId: bot.id,
                   computer: bot.computer,
                   cloudBackend,
+                  orgoComputerId: bot.orgoComputerId,
                 });
                 setPhase("ready");
               }
@@ -583,6 +593,7 @@ export function ComputerPanel({
           botId: bot.id,
           computer: bot.computer,
           cloudBackend,
+          orgoComputerId: bot.orgoComputerId,
         });
         if (action === "team-orgo") {
           setTeamComputer({ id: status.teamComputer.id, name: status.teamComputer.name,
@@ -614,6 +625,7 @@ export function ComputerPanel({
             botId: bot.id,
             computer: bot.computer,
             cloudBackend,
+            orgoComputerId: bot.orgoComputerId,
           });
           setPhase("ready");
         });
@@ -646,6 +658,7 @@ export function ComputerPanel({
   }, [
     bot.id,
     bot.computer,
+    bot.orgoComputerId,
     bot.section,
     bot.autoStartVps,
     bot.busy,
@@ -969,7 +982,7 @@ export function ComputerPanel({
           setOrgoState(result.container ?? null);
           if (result.ready) {
             if (bot.computer === "cloud") {
-              setResolvedComputerSelection({ botId: bot.id, computer: bot.computer, cloudBackend });
+              setResolvedComputerSelection({ botId: bot.id, computer: bot.computer, cloudBackend, orgoComputerId: bot.orgoComputerId });
             }
             setPhase("ready");
           }
@@ -1043,7 +1056,7 @@ export function ComputerPanel({
       setVpsStatus(result);
       setOrgoState(result.container ?? null);
       if (result.ready && bot.computer === "cloud") {
-        setResolvedComputerSelection({ botId: bot.id, computer: bot.computer, cloudBackend });
+        setResolvedComputerSelection({ botId: bot.id, computer: bot.computer, cloudBackend, orgoComputerId: bot.orgoComputerId });
       }
       setPhase(result.ready ? "ready" : "error");
       if (!result.ready) setError(result.problem ?? new LocalizedPanelError("computer.err.vpsReplaceNotReady"));
@@ -1619,6 +1632,9 @@ export function ComputerPanel({
                 vpsSupported={vpsSupported}
                 onChange={(backend) => updateComputerSelection({ cloudBackend: backend })}
               />
+              {cloudBackend === "orgo" && (
+                <OrgoComputerPicker bot={bot} compact onChange={updateComputerSelection} />
+              )}
             </>
           )}
           {bot.computer !== "cloud" && (

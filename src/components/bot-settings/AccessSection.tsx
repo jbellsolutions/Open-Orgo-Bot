@@ -15,6 +15,7 @@ import { mcpServersForBot, useMcpServers } from "@/lib/mcp-servers";
 import { shortPath } from "@/lib/short-path";
 import { useDesktopCapabilities } from "../DesktopCapabilities";
 import { CloudBackendPicker } from "../CloudBackendPicker";
+import { OrgoComputerPicker } from "../OrgoComputerPicker";
 import { LocalComputerAutoWarning } from "../LocalComputerAutoWarning";
 import { Switch } from "../SettingsPrimitives";
 import { preloadConnectedApps, type ConnectorInventory } from "../PluginsPanel";
@@ -291,6 +292,9 @@ export function AccessSection({
               vpsSupported={canUseVps}
               onChange={(backend) => patch({ cloudBackend: backend })}
             />
+            {(bot.cloudBackend ?? "orgo") === "orgo" && (
+              <OrgoComputerPicker bot={bot} onChange={patch} />
+            )}
             {!bot.computer && bot.cloudBackend === "vps" && (
               <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
                 <div className="min-w-0">

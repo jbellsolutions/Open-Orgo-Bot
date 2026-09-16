@@ -71,11 +71,15 @@ download checksum matches the checksum published with the GitHub release.
 3. In **Settings → Connections**, confirm Super Browser says **Ready** if its
    bundle is installed in Codex or the app's resources.
 4. Create a bot, choose a model, and send a message.
-5. Select **Computer → Cloud** to create or attach the bot's Orgo computer.
+5. Open the bot's **Computer** panel, select **Cloud → Orgo**, and choose one
+   of your existing Orgo computers. A computer already assigned to another
+   agent is labeled and cannot be selected.
 
 Secrets entered through the desktop app use the existing encrypted credential
-store. An Orgo computer is bound to a verified provider UUID before the app
-allows lifecycle or control actions.
+store. Each agent saves one verified Orgo computer UUID. Renaming the computer
+does not change the assignment, and a missing assignment fails closed rather
+than silently moving the agent onto another screen or creating another paid
+computer.
 
 ## What changed from upstream
 
@@ -94,7 +98,8 @@ allows lifecycle or control actions.
 - **A real desktop app.** No browser wrapper or replacement interface.
 - **Hermes by default.** Use open models through your existing Hermes setup.
 - **One Orgo computer per bot.** Persistent remote desktops with screenshots,
-  interactive viewing, shell access, and lifecycle controls.
+  interactive viewing, shell access, and lifecycle controls. Existing Orgo
+  computers are discoverable even when they were created outside this app.
 - **Super Browser routing.** Hermes can plan provider-heavy, anti-bot, proxy,
   fleet, and research workflows while ordinary pages stay in the app's fast
   built-in browser.
@@ -122,6 +127,14 @@ The three pieces have distinct jobs:
    and durable run evidence.
 4. **Orgo is the full computer.** Desktop apps, Linux files, and shell work go
    to the bot's assigned Orgo machine.
+
+Every turn receives an app-owned MCP computer bridge pinned to the selected
+Orgo UUID. The model never gets a free-form computer-id field, so it cannot
+switch itself to another agent's machine. Shell commands use Orgo's
+authenticated terminal API through that same pinned bridge. Open Orgo Bot does
+not invent an SSH hostname from a VNC URL or private address; native SSH can be
+added only when Orgo returns a verified endpoint and host key for the exact
+selected computer.
 
 Open Orgo Bot searches for Super Browser in the packaged resources, an
 explicit `OOB_SUPER_BROWSER_ROOT`, and the standard Codex/agent skill folders.

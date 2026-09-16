@@ -344,6 +344,8 @@ export interface Bot {
   computer?: "cloud" | "vm" | "local" | "browser" | "off";
   /** Which cloud computer backs `computer: "cloud"`; absent means Orgo. */
   cloudBackend?: CloudBackend;
+  /** Exact Orgo computer assigned to this bot. */
+  orgoComputerId?: string;
   /** Allow Auto to prepare/start the managed VPS container. Off by default. */
   autoStartVps?: boolean;
   /** where new tasks run their shell tools; absent = the private bot workspace */
@@ -1705,13 +1707,19 @@ export function reducer(state: AppState, action: Action): AppState {
         acknowledgeLocalAuto: _localAck,
         confirmFullAccess: _fullConfirmation,
         computer,
+        orgoComputerId,
         ...rest
       } = action.patch;
-      const botPatch = computer === null
-        ? { ...rest, computer: undefined }
-        : computer === undefined
+      const normalizedOrgo = orgoComputerId === null
+        ? { ...rest, orgoComputerId: undefined }
+        : orgoComputerId === undefined
           ? rest
-          : { ...rest, computer };
+          : { ...rest, orgoComputerId };
+      const botPatch = computer === null
+        ? { ...normalizedOrgo, computer: undefined }
+        : computer === undefined
+          ? normalizedOrgo
+          : { ...normalizedOrgo, computer };
       return updateBot(next, action.botId, (b) => ({ ...b, ...botPatch }));
     }
     case "threadActive": {

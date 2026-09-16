@@ -2698,6 +2698,55 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("assigns existing Orgo computers to one agent at a time", async () => {
+    const botIds: string[] = [];
+    try {
+      expect((await api("PUT", "/api/config", { orgo: { apiKey: "box_route" } })).status).toBe(200);
+      const first = (await api("POST", "/api/bots")).body.bot;
+      const second = (await api("POST", "/api/bots")).body.bot;
+      botIds.push(first.id, second.id);
+      const computerId = "00000000-0000-4000-8000-000000000041";
+      managedBoxRows = [
+        { id: computerId, name: "Existing Orgo 1", status: "running" },
+        { id: "00000000-0000-4000-8000-000000000042", name: "Existing Orgo 2", status: "stopped" },
+        { id: "00000000-0000-4000-8000-000000000043", name: "Existing Orgo 3", status: "running" },
+        { id: "00000000-0000-4000-8000-000000000044", name: "Existing Orgo 4", status: "running" },
+      ];
+
+      const listed = await api("GET", "/api/orgo/computers");
+      expect(listed.status).toBe(200);
+      expect(listed.body.instances).toHaveLength(4);
+      expect(listed.body.instances[0]).toMatchObject({ computerId, ownerBotId: null, available: true });
+
+      const assigned = await api("PATCH", `/api/bots/${first.id}`, {
+        orgoComputerId: computerId,
+        computer: "cloud",
+        cloudBackend: "orgo",
+      });
+      expect(assigned.status).toBe(200);
+      expect(assigned.body.bot).toMatchObject({ orgoComputerId: computerId, computer: "cloud", cloudBackend: "orgo" });
+
+      const after = await api("GET", "/api/orgo/computers");
+      expect(after.body.instances.find((instance: { computerId: string }) => instance.computerId === computerId)).toMatchObject({
+        ownerBotId: first.id,
+        ownerName: first.name,
+        available: false,
+      });
+      const collision = await api("PATCH", `/api/bots/${second.id}`, { orgoComputerId: computerId });
+      expect(collision.status).toBe(409);
+      expect(collision.body.error).toMatch(/already assigned/i);
+
+      const cleared = await api("PATCH", `/api/bots/${first.id}`, { orgoComputerId: null });
+      expect(cleared.status).toBe(200);
+      expect(cleared.body.bot.orgoComputerId).toBeUndefined();
+    } finally {
+      managedBoxRows = [];
+      for (const botId of botIds) await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
+      await api("PUT", "/api/config", { orgo: { apiKey: "" } });
+      boxRouteCalls.length = 0;
+    }
+  });
+
   it("keeps a bot when its hidden Orgo exists or the provider cannot prove it absent", async () => {
     let botId = "";
     let guardBotId = "";

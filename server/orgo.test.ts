@@ -94,6 +94,25 @@ describe("Orgo provider adapter", () => {
       authorization: "Bearer orgo-test-key",
       body: { workspace_id: WORKSPACE_ID, os: "linux", ram: 4, cpu: 1, disk_size_gb: 8, resolution: "1280x720x24" },
     });
+
+    // Existing computers do not carry the app's generated name. They must
+    // still appear in assignment inventory and an explicit UUID must reuse
+    // that exact machine without issuing another billable create request.
+    const generatedName = String(computer?.name ?? "");
+    if (computer) computer.name = "Existing Orgo Four";
+    const assignable = await provider.listAssignableOrgos(cfg, [{ botId: "bot-2", name: "Research", inUse: false }]);
+    expect(assignable).toMatchObject({
+      available: true,
+      instances: [{ computerId: COMPUTER_ID, name: "Existing Orgo Four", ownerBotId: null, available: true }],
+    });
+    const createsBeforeAssignment = calls.filter((call) => call.method === "POST" && call.path === "/api/computers").length;
+    await expect(provider.provisionOrgo(cfg, "bot-2", "Research", COMPUTER_ID)).resolves.toMatchObject({
+      computerId: COMPUTER_ID,
+      machineName: "Existing Orgo Four",
+      reused: true,
+    });
+    expect(calls.filter((call) => call.method === "POST" && call.path === "/api/computers")).toHaveLength(createsBeforeAssignment);
+    if (computer) computer.name = generatedName;
   });
 
   it("maps screenshot, shell, stop, start, inventory and deletion", async () => {

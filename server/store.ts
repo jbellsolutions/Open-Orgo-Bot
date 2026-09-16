@@ -654,6 +654,9 @@ export interface BotRecord {
   computer?: "cloud" | "vm" | "local" | "browser" | "off";
   /** Which cloud computer backs `computer: "cloud"`; absent means Orgo. */
   cloudBackend?: CloudBackend;
+  /** Exact existing Orgo computer assigned to this bot. Provider identity is
+   * a UUID so renaming a computer cannot move the bot to another screen. */
+  orgoComputerId?: string;
   /** Auto mode may prepare/start this bot's managed VPS container. Off by
    * default because starting remote infrastructure is an external action. */
   autoStartVps?: boolean;
@@ -901,6 +904,7 @@ export class Store {
     let botsMigrated = false;
     const browserProfileAliases = loadBrowserProfileIdAliases();
     const chiefSectionsSeen = new Set<string>();
+    const assignedOrgoComputers = new Set<string>();
     let groupsMigrated = false;
     for (const b of this.bots) {
       // transient state never survives a restart — and if a previous
@@ -937,6 +941,19 @@ export class Store {
       } else if (b.cloudBackend !== undefined && b.cloudBackend !== "orgo" && b.cloudBackend !== "vps") {
         delete b.cloudBackend;
         botsMigrated = true;
+      }
+      if (b.orgoComputerId !== undefined) {
+        const id = typeof b.orgoComputerId === "string" ? b.orgoComputerId.toLowerCase() : "";
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) || assignedOrgoComputers.has(id)) {
+          delete b.orgoComputerId;
+          botsMigrated = true;
+        } else {
+          if (id !== b.orgoComputerId) {
+            b.orgoComputerId = id;
+            botsMigrated = true;
+          }
+          assignedOrgoComputers.add(id);
+        }
       }
       if (b.autoStartVps !== undefined && b.autoStartVps !== true && b.autoStartVps !== false) {
         delete b.autoStartVps;

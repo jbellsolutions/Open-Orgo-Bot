@@ -3627,6 +3627,7 @@ function managedOrgoOwners(): orgo.ManagedOrgoOwner[] {
   return [...store.bots.map((bot) => ({
     botId: bot.id,
     name: bot.name,
+    computerId: bot.orgoComputerId,
     // A machine is not safe to mutate while any app-level work or human
     // control lease still names its owner. This is deliberately conservative
     // across destination changes: an old Orgo may still contain valuable state.
@@ -5604,7 +5605,7 @@ async function startTurn(
         if (!mountsCloudComputer && wants === "cloud") {
           throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
         }
-        let b = await orgo.findOrgo(cfg, bot.id).catch(() => null);
+        let b = await orgo.findOrgo(cfg, bot.id, bot.orgoComputerId).catch(() => null);
         let lifecycle = orgo.orgoTurnLifecycleAction({
           explicitCloud: wants === "cloud",
           canMount: mountsCloudComputer,
@@ -5612,8 +5613,8 @@ async function startTurn(
         });
         if (lifecycle === "provision") {
           broadcast({ kind: "computer", botId: bot.id, state: "provisioning" });
-          await orgo.provisionOrgo(cfg, bot.id, bot.name);
-          b = await orgo.findOrgo(cfg, bot.id).catch(() => null);
+          await orgo.provisionOrgo(cfg, bot.id, bot.name, bot.orgoComputerId);
+          b = await orgo.findOrgo(cfg, bot.id, bot.orgoComputerId).catch(() => null);
           lifecycle = orgo.orgoTurnLifecycleAction({
             explicitCloud: true,
             canMount: mountsCloudComputer,
@@ -5626,7 +5627,7 @@ async function startTurn(
         // consent boundary for the resume (~8s, and it un-pauses billing).
         if (lifecycle === "wake") {
           broadcast({ kind: "computer", botId: bot.id, state: "waking" });
-          b = (await orgo.readyOrgo(cfg, bot.id).catch(() => null)) ?? b;
+          b = (await orgo.readyOrgo(cfg, bot.id, 60_000, bot.orgoComputerId).catch(() => null)) ?? b;
           lifecycle = orgo.orgoTurnLifecycleAction({
             explicitCloud: true,
             canMount: mountsCloudComputer,
@@ -13190,6 +13191,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (field) return json(res, 403, { error: `forbidden: this session may change how a bot looks, not "${field}" (needs the admin scope)` });
       }
       const existingBot = store.bot(m[1]);
+      const beforeOrgoComputerId = existingBot?.orgoComputerId;
       const selectedTask = existingBot ? requestedTaskBot(existingBot.id, undefined) : null;
       const beforeProfile = existingBot ? profileSnapshot(existingBot) : undefined;
       if (body.requireAvailableModel !== undefined && typeof body.requireAvailableModel !== "boolean") {
@@ -13258,6 +13260,36 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       const computerSpecified = Object.prototype.hasOwnProperty.call(body, "computer");
+      const orgoComputerSpecified = Object.prototype.hasOwnProperty.call(body, "orgoComputerId");
+      let requestedOrgoComputerId = existingBot?.orgoComputerId;
+      if (orgoComputerSpecified) {
+        if (body.orgoComputerId === null || body.orgoComputerId === "") {
+          requestedOrgoComputerId = undefined;
+          patch.orgoComputerId = undefined;
+        } else if (typeof body.orgoComputerId === "string" && z.string().uuid().safeParse(body.orgoComputerId).success) {
+          requestedOrgoComputerId = body.orgoComputerId.toLowerCase();
+          patch.orgoComputerId = requestedOrgoComputerId;
+        } else {
+          return json(res, 400, { error: "orgoComputerId must be an Orgo computer UUID or null" });
+        }
+        if (!existingBot) return json(res, 404, { error: "no such bot" });
+        if (requestedOrgoComputerId !== existingBot.orgoComputerId) {
+          if (botHasActiveTurn(existingBot.id) || routines?.activeRunForBot(existingBot.id) ||
+              botComputerControlSnapshot(existingBot.id).held || orgoLifecycleBusyBots.has(existingBot.id)) {
+            return json(res, 409, { error: "Stop this agent and release computer control before changing its Orgo computer" });
+          }
+          if (requestedOrgoComputerId) {
+            if (!orgo.orgoConfigured(cfg)) return json(res, 409, { error: "Connect Orgo before choosing a computer" });
+            const inventory = await orgo.listAssignableOrgos(cfg, managedOrgoOwners());
+            if (!inventory.available) return json(res, 503, { error: inventory.problem ?? "Orgo computer inventory is unavailable" });
+            const selected = inventory.instances.find((instance) => instance.computerId.toLowerCase() === requestedOrgoComputerId);
+            if (!selected) return json(res, 404, { error: "That Orgo computer is not accessible in the selected workspace" });
+            if (selected.ownerBotId && selected.ownerBotId !== existingBot.id) {
+              return json(res, 409, { error: `That computer is already assigned to ${selected.ownerName ?? "another agent"}` });
+            }
+          }
+        }
+      }
       let requestedComputer = existingBot?.computer;
       if (computerSpecified) {
         if (body.computer === null) {
@@ -13582,6 +13614,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         sectionKey(existingBot?.section) !== sectionKey(section);
       let bot: BotRecord | null;
       const freshBrowserBot = store.bot(m[1]);
+      if (freshBrowserBot && orgoComputerSpecified && requestedOrgoComputerId !== freshBrowserBot.orgoComputerId) {
+        if (botHasActiveTurn(freshBrowserBot.id) || routines?.activeRunForBot(freshBrowserBot.id) ||
+            botComputerControlSnapshot(freshBrowserBot.id).held || orgoLifecycleBusyBots.has(freshBrowserBot.id)) {
+          return json(res, 409, { error: "Stop this agent and release computer control before changing its Orgo computer" });
+        }
+        if (requestedOrgoComputerId) {
+          const claimed = managedOrgoOwners().find((owner) => owner.botId !== freshBrowserBot.id && owner.computerId?.toLowerCase() === requestedOrgoComputerId);
+          if (claimed) return json(res, 409, { error: `That computer was just assigned to ${claimed.name}` });
+        }
+      }
       // Custom servers are process configuration: a running turn cannot
       // unmount them. Recheck after any awaited runtime revocation above.
       if (body.mcpServers !== undefined) {
@@ -13628,6 +13670,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         bot = store.patchBot(m[1], patch);
       }
       if (!bot) return json(res, 404, { error: "no such bot" });
+      if (orgoComputerSpecified && beforeOrgoComputerId !== bot.orgoComputerId) orgo.forgetOrgo(bot.id);
       if (normalizedSelection && selectedTask) store.patchTask(bot.id, selectedTask.threadId, { modelSelection: normalizedSelection });
       if (existingBot && (bot.browserProfile !== beforeBrowserProfile || bot.browser !== beforeBrowserEnabled)) {
         browserLive.closeForBot(bot.id);
@@ -14785,6 +14828,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (method === "GET" && path === "/api/computers/orgo") {
       res.setHeader("cache-control", "private, no-store");
       return json(res, 200, await orgo.listManagedOrgos(cfg, managedOrgoOwners()));
+    }
+    if (method === "GET" && path === "/api/orgo/computers") {
+      res.setHeader("cache-control", "private, no-store");
+      return json(res, 200, await orgo.listAssignableOrgos(cfg, managedOrgoOwners()));
     }
     if (method === "GET" && path === "/api/orgo/workspaces") {
       res.setHeader("cache-control", "private, no-store");
@@ -16150,7 +16197,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (teamComputer) return json(res, 200, { backend: "orgo", teamComputer: { id: teamComputer.id, name: teamComputer.name }, ...(await orgo.orgoStatus(cfg, teamComputerOwner(teamComputer.id))) });
       return bot.cloudBackend === "vps"
         ? json(res, 200, { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) })
-        : json(res, 200, { backend: "orgo", ...(await orgo.orgoStatus(cfg, bot.id)) });
+        : json(res, 200, { backend: "orgo", ...(await orgo.orgoStatus(cfg, bot.id, bot.orgoComputerId)) });
     }
     // Who is driving this bot's computer. GET is the panel's initial read;
     // POST take/release/dismiss-help are the person's three moves. The bot
@@ -16311,15 +16358,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       try {
         switch (m[2]) {
           case "provision":
-            return json(res, 200, await orgo.provisionOrgo(cfg, botId, bot.name));
+            return json(res, 200, await orgo.provisionOrgo(cfg, botId, bot.name, bot.orgoComputerId));
           case "join":
-            return json(res, 200, await (activeOrgoTurn ? orgo.joinReadyOrgo(cfg, botId) : orgo.joinOrgo(cfg, botId)));
+            return json(res, 200, await (activeOrgoTurn ? orgo.joinReadyOrgo(cfg, botId, bot.orgoComputerId) : orgo.joinOrgo(cfg, botId, bot.orgoComputerId)));
           case "sleep":
-            return json(res, 200, await orgo.sleepOrgo(cfg, botId));
+            return json(res, 200, await orgo.sleepOrgo(cfg, botId, bot.orgoComputerId));
           case "exec":
-            return json(res, 200, await orgo.execOnOrgo(cfg, botId, orgoCommand ?? ""));
+            return json(res, 200, await orgo.execOnOrgo(cfg, botId, orgoCommand ?? "", bot.orgoComputerId));
           case "screenshot":
-            return json(res, 200, await orgo.screenshotOrgo(cfg, botId));
+            return json(res, 200, await orgo.screenshotOrgo(cfg, botId, bot.orgoComputerId));
         }
       } finally {
         releaseComputerLifecycle();
