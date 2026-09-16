@@ -104,6 +104,81 @@ function ProfileFields() {
   );
 }
 
+type SuperBrowserSetup = {
+  available: boolean; verified?: boolean; version?: string; source?: string; reason?: string;
+  automaticMcpMount: boolean;
+  localPlaywright: { ready: boolean; status: string };
+  orgo: { status: "provided_per_assigned_turn"; ready: boolean; computerId?: string };
+  providers: Array<{ name: string; displayName: string; readinessStatus: string; usableNow: boolean; missingCredentialNames: string[] }>;
+  checkError?: string;
+};
+
+function SuperBrowserSettings() {
+  const { state } = useStore();
+  const [status, setStatus] = useState<SuperBrowserSetup | null>(null);
+  const [busy, setBusy] = useState<"check" | "install" | "playwright" | "orgo" | null>(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const check = async () => {
+    setBusy("check"); setError(""); setMessage("");
+    try { setStatus(await api("/api/super-browser/status")); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(null); }
+  };
+  useEffect(() => { void check(); }, []);
+  const action = async (kind: "install" | "playwright" | "orgo") => {
+    if (kind === "install" && !window.confirm("Download and install the Playwright Chromium runtime, then run Super Browser's local fixture test?")) return;
+    setBusy(kind); setError(""); setMessage("");
+    try {
+      const result = kind === "install"
+        ? await api("/api/super-browser/runtime/install", { method: "POST", body: JSON.stringify({ component: "playwright-chromium", acknowledgeDownload: true }) })
+        : await api("/api/super-browser/test", { method: "POST", body: JSON.stringify({ provider: kind }) });
+      if (kind !== "install" && result.ok !== true) throw new Error(`${kind === "orgo" ? "Orgo route" : "Local browser"} test did not pass`);
+      setMessage(kind === "install" ? "Chromium installed and the local fixture test passed." : `${kind === "orgo" ? "Pinned Orgo route" : "Local browser"} test passed.`);
+      setStatus(await api("/api/super-browser/status"));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(null); }
+  };
+  const summary = status ?? {
+    available: state.config?.superBrowser?.available ?? false,
+    verified: state.config?.superBrowser?.verified,
+    version: state.config?.superBrowser?.version,
+    source: state.config?.superBrowser?.source,
+    reason: state.config?.superBrowser?.reason,
+  };
+  return <div className="rounded-lg border border-hairline/40 bg-inset px-3 py-3">
+    <div className="flex items-center justify-between gap-3">
+      <div className="text-[13px] font-medium text-ink">Super Browser — Built-in</div>
+      <span className={cn("rounded-full px-2 py-0.5 text-[10.5px]", summary.available ? "bg-success/10 text-success" : "bg-raised text-ink-secondary")}>
+        {summary.available ? "Verified" : "Unavailable"}
+      </span>
+    </div>
+    <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
+      {summary.available
+        ? `Manifest-verified bundle${summary.version ? ` v${summary.version}` : ""}${summary.source ? ` · ${summary.source}` : ""}. It mounts automatically for MCP-capable engines.`
+        : summary.reason ?? "The verified bundle is not installed."}
+    </p>
+    {status && <div className="mt-3 grid gap-2 text-[11.5px] sm:grid-cols-2">
+      <div className="rounded-lg bg-card px-3 py-2"><span className="text-ink-secondary">Automatic MCP mount</span><div className={status.automaticMcpMount ? "text-success" : "text-danger"}>{status.automaticMcpMount ? "Ready" : "Unavailable"}</div></div>
+      <div className="rounded-lg bg-card px-3 py-2"><span className="text-ink-secondary">Local Playwright runtime</span><div className={status.localPlaywright.ready ? "text-success" : "text-warning"}>{status.localPlaywright.ready ? "Ready" : status.localPlaywright.status.replaceAll("_", " ")}</div></div>
+      <div className="rounded-lg bg-card px-3 py-2 sm:col-span-2"><span className="text-ink-secondary">Orgo route</span><div className={status.orgo.ready ? "text-success" : "text-ink-secondary"}>{status.orgo.ready ? `Provided per assigned turn · ${status.orgo.computerId}` : "Provided per assigned turn after General has a verified workstation"}</div></div>
+    </div>}
+    {status?.providers?.length ? <details className="mt-3 text-[11px] text-ink-secondary">
+      <summary className="cursor-pointer">Optional providers and missing credentials</summary>
+      <div className="mt-2 space-y-1">{status.providers.filter(provider => provider.name !== "playwright" && provider.name !== "orgo").map(provider => <div key={provider.name}>{provider.displayName}: {provider.missingCredentialNames.length ? `missing ${provider.missingCredentialNames.join(", ")}` : provider.readinessStatus.replaceAll("_", " ")}</div>)}</div>
+    </details> : null}
+    {(error || status?.checkError) && <p role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error || status?.checkError}</p>}
+    {message && <p role="status" className="mt-3 rounded-lg bg-success/10 px-3 py-2 text-[11.5px] text-success">{message}</p>}
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-40" disabled={busy !== null} onClick={() => void check()}>{busy === "check" ? "Checking…" : "Check setup"}</button>
+      <button className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-40" disabled={busy !== null || !summary.available} onClick={() => void action("install")}>{busy === "install" ? "Installing…" : "Install local Chromium"}</button>
+      <button className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-40" disabled={busy !== null || status?.localPlaywright.ready !== true} onClick={() => void action("playwright")}>{busy === "playwright" ? "Testing…" : "Test local browser"}</button>
+      <button className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-40" disabled={busy !== null || status?.orgo.ready !== true} onClick={() => void action("orgo")}>{busy === "orgo" ? "Testing…" : "Test Orgo route"}</button>
+    </div>
+    <p className="mt-2 text-[10.5px] leading-relaxed text-ink-secondary">No generic Super Browser token is required. Credential-bearing actions and external writes keep Super Browser's approval and verification gates.</p>
+  </div>;
+}
+
 function UpdatesRow() {
   const s = useUpdaterState();
   if (!window.ogb?.updater) return null;
@@ -685,22 +760,7 @@ export function SettingsModal() {
                   <OpenAiCompatUrl />
                   <ApiKeyRow section="xai" testProvider="xai" />
                   <div className="pt-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.integrations.title")}</div>
-                  <div className="rounded-lg border border-hairline/40 bg-inset px-3 py-2.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-[13px] font-medium text-ink">Super Browser</div>
-                      <span className={cn(
-                        "rounded-full px-2 py-0.5 text-[10.5px]",
-                        state.config?.superBrowser?.available ? "bg-success/10 text-success" : "bg-raised text-ink-secondary",
-                      )}>
-                        {state.config?.superBrowser?.available ? "Ready" : "Not installed"}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
-                      {state.config?.superBrowser?.available
-                        ? `Verified routing bundle${state.config.superBrowser.version ? ` v${state.config.superBrowser.version}` : ""}. Hermes uses it automatically for advanced browser planning.`
-                        : state.config?.superBrowser?.reason ?? "Install Super Browser to add advanced browser routing."}
-                    </p>
-                  </div>
+                  <SuperBrowserSettings />
                   <ApiKeyRow section="orgo" />
                   <OrgoWorkspace />
                   <VpsConnection />

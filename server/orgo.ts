@@ -27,6 +27,7 @@ interface OrgoComputer {
   id: string;
   name: string;
   workspace_id?: string;
+  workspace_name?: string;
   status: string;
   state: string;
   instance_id?: string;
@@ -72,6 +73,8 @@ export interface ManagedOrgoInventory {
 export interface AssignableOrgoInventoryInstance {
   computerId: string;
   name: string;
+  workspaceId: string | null;
+  workspaceName: string | null;
   state: string;
   ownerBotId: string | null;
   ownerName: string | null;
@@ -172,7 +175,11 @@ async function allComputers(cfg: AppConfig): Promise<OrgoComputer[]> {
   const result = await orgoJson(cfg, "/workspaces");
   if (!result.ok) throw Object.assign(new Error(orgoErrorMessage(result.status, "computer listing", result.body)), { status: result.status });
   return workspaceRows(result.body).flatMap((workspace) =>
-    (Array.isArray(workspace.desktops) ? workspace.desktops : []).map((computer) => ({ ...computer, workspace_id: computer.workspace_id ?? workspace.id })),
+    (Array.isArray(workspace.desktops) ? workspace.desktops : []).map((computer) => ({
+      ...computer,
+      workspace_id: computer.workspace_id ?? workspace.id,
+      workspace_name: workspace.name,
+    })),
   ).filter((computer) => UUID.test(computer.id) && typeof computer.name === "string");
 }
 
@@ -308,6 +315,8 @@ export async function listAssignableOrgos(cfg: AppConfig, owners: ManagedOrgoOwn
       return {
         computerId: computer.id,
         name: computer.name,
+        workspaceId: computer.workspace_id ?? null,
+        workspaceName: computer.workspace_name ?? null,
         state: computer.status,
         ownerBotId: owner?.botId ?? null,
         ownerName: owner?.name ?? null,
@@ -554,7 +563,38 @@ export async function screenshotOrgo(cfg: AppConfig, botId: string, knownCompute
   const result = await orgoJson(cfg, `/computers/${computer.id}/screenshot`);
   const image = result.body?.image ?? result.body?.data;
   if (!result.ok || typeof image !== "string" || !image) throw new Error(orgoErrorMessage(result.status, "screenshot", result.body));
-  return { png: image.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, ""), format: "jpeg" };
+  const inline = image.match(/^data:image\/(png|jpe?g);base64,(.+)$/i);
+  let declared = inline?.[1]?.toLowerCase();
+  let png = inline?.[2] ?? image;
+  if (!inline && (/^\/api\/storage\//i.test(image) || /^https?:\/\//i.test(image))) {
+    const api = new URL(ORGO_API);
+    const asset = new URL(image, api);
+    // Never forward the account bearer to an arbitrary URL supplied by a
+    // provider response. Current Orgo screenshot assets live under this
+    // same-origin path.
+    if (asset.origin !== api.origin || !asset.pathname.startsWith("/api/storage/")) {
+      throw new Error("Orgo returned an unsafe screenshot URL");
+    }
+    const screenshot = await fetch(asset, { headers: headers(cfg), signal: AbortSignal.timeout(30_000) });
+    if (!screenshot.ok) throw new Error(orgoErrorMessage(screenshot.status, "screenshot image"));
+    const contentType = screenshot.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "image/png" && contentType !== "image/jpeg") {
+      throw new Error("Orgo returned an unsupported screenshot image type");
+    }
+    declared = contentType === "image/png" ? "png" : "jpeg";
+    png = Buffer.from(await screenshot.arrayBuffer()).toString("base64");
+  }
+  const header = Buffer.from(png.slice(0, 32), "base64");
+  const detected = header.length >= 8 && header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    ? "png"
+    : header.length >= 2 && header[0] === 0xff && header[1] === 0xd8
+      ? "jpeg"
+      : null;
+  // Orgo currently returns PNG on some desktops and JPEG on others. Keep the
+  // provider's data-URL type so the renderer does not try to decode a valid
+  // PNG as image/jpeg. Headerless legacy payloads retain the previous JPEG
+  // fallback for compatibility.
+  return { png, format: detected ?? (declared === "png" ? "png" : "jpeg") };
 }
 
 export function forgetOrgo(botId: string): void {

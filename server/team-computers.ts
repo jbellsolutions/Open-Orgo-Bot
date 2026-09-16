@@ -13,12 +13,25 @@ export const teamComputerAssignment = z.object({
   section: z.string().trim().max(60).nullable(),
   acknowledgeSharedAccess: z.literal(true),
 }).strict();
-const entrySchema = z.object({
+export const orgoComputerIdSchema = z.string().trim().uuid().transform(value => value.toLowerCase());
+export const teamComputerInspect = z.object({ computerId: orgoComputerIdSchema }).strict();
+export const teamComputerAdopt = z.object({
+  requestId: z.string().uuid(),
+  computerId: orgoComputerIdSchema,
+  confirmName: teamComputerCreate.shape.name,
+  acknowledgeSharedAccess: z.literal(true),
+}).strict();
+const entryV1Schema = z.object({
   id: z.string().uuid(), name: teamComputerCreate.shape.name,
   section: z.string().trim().max(60).nullable(), createdAt: z.number().finite().nonnegative(),
   problem: z.string().max(500).optional(),
 }).strict();
-const fileSchema = z.object({ version: z.literal(1), environmentId: z.string().uuid(), computers: z.array(entrySchema).max(100) }).strict();
+const entrySchema = entryV1Schema.extend({
+  origin: z.enum(["created", "connected"]),
+  orgoComputerId: orgoComputerIdSchema.optional(),
+}).strict();
+const fileV1Schema = z.object({ version: z.literal(1), environmentId: z.string().uuid(), computers: z.array(entryV1Schema).max(100) }).strict();
+const fileSchema = z.object({ version: z.literal(2), environmentId: z.string().uuid(), computers: z.array(entrySchema).max(100) }).strict();
 export type TeamComputerRecord = z.infer<typeof entrySchema>;
 export const teamComputerOwner = (id: string): string => `computer_${id}`;
 const failure = (message: string, status = 409) => Object.assign(new Error(message), { status });
@@ -38,12 +51,20 @@ export class TeamComputers {
       if (!existsSync(file)) return;
       const stat = lstatSync(file);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 100_000) throw new Error("unsafe registry file");
-      const saved = fileSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+      const raw = JSON.parse(readFileSync(file, "utf8"));
+      const legacy = fileV1Schema.safeParse(raw);
+      const saved = legacy.success
+        ? fileSchema.parse({ ...legacy.data, version: 2, computers: legacy.data.computers.map(entry => ({ ...entry, origin: "created" as const })) })
+        : fileSchema.parse(raw);
       if (saved.environmentId !== environmentId) throw new Error("registry belongs to another workspace; its computers were not transferred");
       if (new Set(saved.computers.map(entry => entry.id)).size !== saved.computers.length) throw new Error("duplicate computer identity");
+      const providerIds = saved.computers.flatMap(entry => entry.orgoComputerId ? [entry.orgoComputerId] : []);
+      if (new Set(providerIds).size !== providerIds.length) throw new Error("duplicate Orgo computer identity");
+      if (saved.computers.some(entry => entry.origin === "connected" && !entry.orgoComputerId)) throw new Error("a connected computer is missing its Orgo identity");
       const sections = saved.computers.flatMap(entry => entry.section === null ? [] : [entry.section]);
       if (new Set(sections).size !== sections.length) throw new Error("a team has more than one computer");
       this.entries = saved.computers;
+      if (legacy.success) this.save(this.entries);
     } catch (error) {
       this.problem = `Team computer registry could not be loaded: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -68,9 +89,32 @@ export class TeamComputers {
       return existing;
     }
     if (entries.length >= 100) throw failure("This workspace has reached its team computer limit");
-    const entry = entrySchema.parse({ id, name, section: null, createdAt: Date.now() });
+    const entry = entrySchema.parse({ id, name, section: null, createdAt: Date.now(), origin: "created" });
     this.save([...entries, entry]);
     return { ...entry };
+  }
+  adopt(name: string, orgoComputerId: string, id: string): TeamComputerRecord {
+    const entries = this.list();
+    const normalizedComputerId = orgoComputerIdSchema.parse(orgoComputerId);
+    const existing = entries.find(entry => entry.id === id);
+    if (existing) {
+      if (existing.name !== name || existing.orgoComputerId !== normalizedComputerId || existing.origin !== "connected") {
+        throw failure("This connection id already names a different computer");
+      }
+      return existing;
+    }
+    const claimed = entries.find(entry => entry.orgoComputerId === normalizedComputerId);
+    if (claimed) throw failure(`This Orgo computer is already connected as ${claimed.name}`);
+    if (entries.length >= 100) throw failure("This workspace has reached its team computer limit");
+    const entry = entrySchema.parse({ id, name, section: null, createdAt: Date.now(), origin: "connected", orgoComputerId: normalizedComputerId });
+    this.save([...entries, entry]);
+    return { ...entry };
+  }
+  pinOrgoComputer(id: string, orgoComputerId: string): TeamComputerRecord {
+    const normalizedComputerId = orgoComputerIdSchema.parse(orgoComputerId);
+    const claimed = this.list().find(entry => entry.id !== id && entry.orgoComputerId === normalizedComputerId);
+    if (claimed) throw failure(`This Orgo computer is already connected as ${claimed.name}`);
+    return this.patch(id, { orgoComputerId: normalizedComputerId });
   }
   assign(id: string, section: string | null): TeamComputerRecord {
     section = entrySchema.shape.section.parse(section);
@@ -92,7 +136,7 @@ export class TeamComputers {
     return { ...next };
   }
   private save(entries: TeamComputerRecord[]): void {
-    writeFileAtomic(this.file, JSON.stringify({ version: 1, environmentId: this.environmentId, computers: entries }), { mode: 0o600 });
+    writeFileAtomic(this.file, JSON.stringify({ version: 2, environmentId: this.environmentId, computers: entries }), { mode: 0o600 });
     this.entries = entries;
   }
 }

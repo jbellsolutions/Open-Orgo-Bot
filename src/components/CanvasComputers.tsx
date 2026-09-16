@@ -8,6 +8,10 @@ import { ConfirmDialog } from "./ConfirmDialog";
 const control = "rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-40";
 const field = "w-full rounded-lg border border-hairline/60 bg-inset px-3 py-2 text-[12px] text-ink outline-none focus:border-accent";
 type Inventory = { computers: TeamComputer[]; configured: boolean; problem?: string };
+type Inspection = {
+  computerId: string; name: string; workspaceId: string | null; workspaceName: string | null;
+  state: string; currentOwner: { id: string; name: string | null } | null; available: boolean; busy: boolean;
+};
 
 /** This shelf is only an owner control. Its list is read-only; every paid
  * lifecycle action is a deliberate button press, never a render effect. */
@@ -27,6 +31,11 @@ export function CanvasComputers({ open, createRequest, drop, sections, onClose, 
   const [readError, setReadError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectId, setConnectId] = useState("");
+  const [inspection, setInspection] = useState<Inspection | null>(null);
+  const [confirmName, setConfirmName] = useState("");
+  const adoptRequestId = useRef(crypto.randomUUID());
   const [name, setName] = useState("");
   const requestId = useRef(crypto.randomUUID());
   const submittedName = useRef<string | null>(null);
@@ -125,7 +134,7 @@ export function CanvasComputers({ open, createRequest, drop, sections, onClose, 
     const timer = window.setInterval(() => { if (!pending.current && document.visibilityState === "visible") void refresh(); }, 20_000);
     return () => window.clearInterval(timer);
   }, [open, refresh]);
-  useEffect(() => { if (createRequest > 0) setCreating(true); }, [createRequest]);
+  useEffect(() => { if (createRequest > 0) { setConnecting(false); setCreating(true); } }, [createRequest]);
   useEffect(() => {
     if (!open) return;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -168,12 +177,57 @@ export function CanvasComputers({ open, createRequest, drop, sections, onClose, 
         <button ref={closeButton} aria-label="Close computers" className={control} onClick={onClose}><X size={15} /></button>
       </header>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-        <p className="text-[12px] leading-relaxed text-ink-secondary">Drag a computer onto a team, or choose its team below. Bots on Auto will use it.</p>
+        <p className="text-[12px] leading-relaxed text-ink-secondary">Drag a computer onto a team, or choose its team below. Bots on Auto share one screen sequentially under the Open Orgo Bot lease.</p>
         {(error || readError || inventory?.problem) && <p role="alert" className="rounded-lg bg-danger/10 p-3 text-[12px] text-danger">{error || readError || inventory?.problem}</p>}
         {inventory && !inventory.configured && <div className="rounded-xl border border-hairline/50 p-3 text-[12px]">
           <p className="text-ink-secondary">Connect your Orgo account before creating a cloud computer.</p>
           <button className={`${control} mt-2 border border-hairline/50`} onClick={settings}>Connect Orgo</button>
         </div>}
+        {connecting && <form className="space-y-3 rounded-xl border border-hairline/60 bg-card p-3" onSubmit={(event) => {
+          event.preventDefault();
+          if (!inventory?.configured || busy !== null) return;
+          if (!inspection) {
+            void mutate("inspect", () => api("/api/team-computers/inspect", { method: "POST", body: JSON.stringify({ computerId: connectId.trim() }) }), (value: Inspection) => {
+              setInspection(value); setConfirmName("");
+            });
+            return;
+          }
+          void mutate("adopt", () => api("/api/team-computers/adopt", { method: "POST", body: JSON.stringify({
+            requestId: adoptRequestId.current,
+            computerId: inspection.computerId,
+            confirmName,
+            acknowledgeSharedAccess: true,
+          }) }), () => {
+            setConnecting(false); setConnectId(""); setInspection(null); setConfirmName(""); adoptRequestId.current = crypto.randomUUID();
+          });
+        }}>
+          <div className="text-[12px] font-medium">Connect existing Orgo computer</div>
+          {!inspection ? <>
+            <label className="block text-[11px] text-ink-secondary" htmlFor="canvas-existing-computer-id">Computer UUID</label>
+            <input id="canvas-existing-computer-id" className={field} value={connectId} placeholder="00000000-0000-4000-8000-000000000000" disabled={busy !== null} onChange={(event) => setConnectId(event.target.value)} />
+            <p className="text-[11px] leading-relaxed text-ink-secondary">The Orgo API key stays in Connections. This only verifies the exact computer and never creates another one.</p>
+          </> : <div className="space-y-2 text-[11px]">
+            <div className="rounded-lg bg-inset p-2.5">
+              <div className="text-[13px] font-medium text-ink">{inspection.name}</div>
+              <div className="mt-1 text-ink-secondary">{inspection.workspaceName ?? inspection.workspaceId ?? "Orgo workspace"} · {inspection.state}</div>
+              <div className="mt-1 break-all font-mono text-[10px] text-ink-secondary">{inspection.computerId}</div>
+              <div className="mt-1 text-ink-secondary">Open Orgo Bot owner: {inspection.currentOwner?.name ?? "None"}</div>
+            </div>
+            {!inspection.available && <p className="rounded-lg bg-danger/10 p-2 text-danger">This computer is busy or already assigned and cannot be connected.</p>}
+            {inspection.available && <>
+              <label className="block text-ink-secondary" htmlFor="canvas-existing-confirm-name">Type <strong className="text-ink">{inspection.name}</strong> to confirm shared access</label>
+              <input id="canvas-existing-confirm-name" className={field} value={confirmName} disabled={busy !== null} onChange={(event) => setConfirmName(event.target.value)} />
+              <p className="rounded-lg bg-warning/10 p-2 text-warning">Agents already running inside this VM remain outside the Open Orgo Bot lease and may compete for its screen.</p>
+            </>}
+          </div>}
+          <div className="flex justify-end gap-1">
+            {inspection && <button type="button" className={control} disabled={busy !== null} onClick={() => { setInspection(null); setConfirmName(""); }}>Back</button>}
+            <button type="button" className={control} disabled={busy !== null} onClick={() => { setConnecting(false); setInspection(null); setConfirmName(""); }}>Cancel</button>
+            <button type="submit" className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-[12px] font-medium text-white disabled:opacity-40" disabled={busy !== null || (!inspection ? !connectId.trim() : !inspection.available || confirmName !== inspection.name)}>
+              {(busy === "inspect" || busy === "adopt") && <Loader2 size={13} className="animate-spin" />}{inspection ? "Connect computer" : "Verify computer"}
+            </button>
+          </div>
+        </form>}
         {creating ? <form className="space-y-3 rounded-xl border border-hairline/60 bg-card p-3" onSubmit={(event) => {
           event.preventDefault();
           const value = submittedName.current ?? name.trim();
@@ -192,7 +246,10 @@ export function CanvasComputers({ open, createRequest, drop, sections, onClose, 
               {busy === "create" && <Loader2 size={13} className="animate-spin" />}Create Orgo
             </button>
           </div>
-        </form> : <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-hairline/60 px-3 py-3 text-[12px] text-ink-secondary hover:bg-control hover:text-ink" disabled={busy !== null} onClick={() => setCreating(true)}><Plus size={14} /> New Orgo computer</button>}
+        </form> : !connecting && <div className="grid gap-2">
+          <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-hairline/60 px-3 py-3 text-[12px] text-ink-secondary hover:bg-control hover:text-ink" disabled={busy !== null} onClick={() => { setConnecting(false); setCreating(true); }}><Plus size={14} /> New Orgo computer</button>
+          <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-hairline/60 px-3 py-3 text-[12px] text-ink-secondary hover:bg-control hover:text-ink" disabled={busy !== null || !inventory?.configured} onClick={() => { setCreating(false); setConnecting(true); }}><Monitor size={14} /> Connect existing Orgo computer</button>
+        </div>}
         {inventory?.computers.map((computer) => {
           const ready = ["idle", "ready", "running"].includes(computer.state);
           const starting = ["init", "provisioning", "provisioned", "cloning", "starting"].includes(computer.state);
@@ -213,6 +270,8 @@ export function CanvasComputers({ open, createRequest, drop, sections, onClose, 
             <span className="min-w-0"><span className="block truncate text-[13px] font-medium">{computer.name}</span><span className="block text-[11px] text-ink-secondary">Orgo · {busy === computer.id ? "Updating…" : computer.state}</span></span>
           </div>
           {computer.problem && <p className="mt-2 text-[11px] text-danger">{computer.problem}</p>}
+          {computer.origin === "connected" && <p className="mt-2 rounded-lg bg-warning/10 p-2 text-[10px] leading-relaxed text-warning">Connected workstation. Resident VM agents are outside the Open Orgo Bot lease and may compete for this screen.</p>}
+          {computer.orgoComputerId && <p className="mt-2 break-all font-mono text-[9.5px] text-ink-secondary">{computer.orgoComputerId}</p>}
           <label className="sr-only" htmlFor={`computer-team-${computer.id}`}>Team for {computer.name}</label>
           <select id={`computer-team-${computer.id}`} className={`${field} mt-3`} disabled={busy !== null} value={computer.section === null ? "unassigned" : `team:${computer.section}`}
             onChange={(event) => requestAssignment(computer, event.target.value === "unassigned" ? null : event.target.value.slice(5))}>
@@ -246,7 +305,7 @@ export function CanvasComputers({ open, createRequest, drop, sections, onClose, 
     <ConfirmDialog open={assignment !== null} tone="neutral" title={assignment?.section === null ? `Unassign ${assignment?.computer.name ?? "computer"}?` : `Assign ${assignment?.computer.name ?? "computer"} to ${assignment?.section || "General"}?`}
       body={assignment?.section === null
         ? "This removes the team default. It does not stop or delete the machine, its files, or its logins. Review the bots' Auto routing before their next task."
-        : "Bots on Auto in this team will share this computer's files and signed-in accounts. Explicit bot computer settings stay unchanged. Only one bot can use the desktop at a time. This does not move the OMB server or enable 24/7 hosting."}
+        : "Bots on Auto in this team will share this computer's files and signed-in accounts, one Open Orgo Bot turn at a time. Explicit bot computer settings stay unchanged. Agents already running inside a connected VM are outside this lease and may still compete for the screen. This does not move the app server or enable 24/7 hosting."}
       confirmLabel={assignment?.section === null ? "Unassign computer" : "Assign computer"} onCancel={cancelAssignment} onConfirm={() => {
         const target = assignment;
         if (!target) return;

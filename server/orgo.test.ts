@@ -13,6 +13,9 @@ describe("Orgo provider adapter", () => {
   let dataDir: string;
   let provider: typeof import("./orgo.ts");
   let computer: Record<string, unknown> | null = null;
+  let screenshotMime: "jpeg" | "png" = "jpeg";
+  let screenshotData = SCREEN;
+  let screenshotStored = false;
   const calls: Array<{ method: string; path: string; body: any; authorization?: string }> = [];
   const cfg = { orgo: { apiKey: "orgo-test-key", workspaceId: WORKSPACE_ID } };
 
@@ -55,7 +58,12 @@ describe("Orgo provider adapter", () => {
           return send(200, { success: true });
         }
         if (path === `/api/computers/${COMPUTER_ID}/screenshot` && request.method === "GET") {
-          return send(200, { image: `data:image/jpeg;base64,${SCREEN}` });
+          return send(200, { image: screenshotStored ? "/api/storage/frame.jpg" : `data:image/${screenshotMime};base64,${screenshotData}` });
+        }
+        if (path === "/api/storage/frame.jpg" && request.method === "GET") {
+          response.writeHead(200, { "content-type": "image/jpeg" });
+          response.end(Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+          return;
         }
         if (path === `/api/computers/${COMPUTER_ID}/bash` && request.method === "POST") {
           return send(200, { success: true, output: "command complete\n" });
@@ -117,6 +125,18 @@ describe("Orgo provider adapter", () => {
 
   it("maps screenshot, shell, stop, start, inventory and deletion", async () => {
     await expect(provider.screenshotOrgo(cfg, "bot-1", COMPUTER_ID)).resolves.toEqual({ png: SCREEN, format: "jpeg" });
+    screenshotMime = "png";
+    await expect(provider.screenshotOrgo(cfg, "bot-1", COMPUTER_ID)).resolves.toEqual({ png: SCREEN, format: "png" });
+    screenshotMime = "jpeg";
+    screenshotData = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+    await expect(provider.screenshotOrgo(cfg, "bot-1", COMPUTER_ID)).resolves.toEqual({ png: screenshotData, format: "png" });
+    screenshotData = SCREEN;
+    screenshotStored = true;
+    await expect(provider.screenshotOrgo(cfg, "bot-1", COMPUTER_ID)).resolves.toEqual({
+      png: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64"), format: "jpeg",
+    });
+    expect(calls.at(-1)).toMatchObject({ path: "/api/storage/frame.jpg", authorization: "Bearer orgo-test-key" });
+    screenshotStored = false;
     await expect(provider.runCommand(cfg, COMPUTER_ID, "printf ok")).resolves.toMatchObject({ ok: true, stdout: "command complete\n" });
     await expect(provider.sleepOrgo(cfg, "bot-1")).resolves.toEqual({ ok: true });
     await expect(provider.readyOrgo(cfg, "bot-1")).resolves.toMatchObject({ id: COMPUTER_ID, status: "running" });

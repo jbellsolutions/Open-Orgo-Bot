@@ -2341,6 +2341,59 @@ describe("harness HTTP API", () => {
     }
   }, 30_000);
 
+  it("inspects and connects an existing Orgo UUID without creating capacity", async () => {
+    const requestId = randomUUID();
+    const computerId = "00000000-0000-4000-8000-000000000091";
+    const name = "Existing shared workstation";
+    try {
+      expect((await api("PUT", "/api/config", { orgo: { apiKey: "box_route" } })).status).toBe(200);
+      managedBoxRows = [{ id: computerId, name, status: "running" }];
+      boxRouteCalls.length = 0;
+
+      const keyInWrongField = await api("POST", "/api/team-computers/inspect", { computerId: "sk_live_not-a-uuid" });
+      expect(keyInWrongField.status).toBe(400);
+      expect(keyInWrongField.body.error).toMatch(/API key belongs in Connections/i);
+
+      const inspected = await api("POST", "/api/team-computers/inspect", { computerId });
+      expect(inspected.status).toBe(200);
+      expect(inspected.body).toMatchObject({
+        computerId,
+        name,
+        workspaceId: ORGO_WORKSPACE_ID,
+        workspaceName: "Fixture workspace",
+        state: "running",
+        currentOwner: null,
+        available: true,
+      });
+      const createsBefore = boxRouteCalls.filter(call => call.method === "POST" && call.path === "/computers").length;
+      expect((await api("POST", "/api/team-computers/adopt", {
+        requestId, computerId, confirmName: "Wrong name", acknowledgeSharedAccess: true,
+      })).status).toBe(409);
+      const adopted = await api("POST", "/api/team-computers/adopt", {
+        requestId, computerId, confirmName: name, acknowledgeSharedAccess: true,
+      });
+      expect(adopted.status).toBe(201);
+      expect(adopted.body.computer).toMatchObject({ id: requestId, name, origin: "connected", orgoComputerId: computerId, section: null });
+      expect((await api("POST", "/api/team-computers/adopt", {
+        requestId, computerId, confirmName: name, acknowledgeSharedAccess: true,
+      })).status).toBe(200);
+      expect((await api("POST", "/api/team-computers/adopt", {
+        requestId: randomUUID(), computerId, confirmName: name, acknowledgeSharedAccess: true,
+      })).status).toBe(409);
+      expect(boxRouteCalls.filter(call => call.method === "POST" && call.path === "/computers")).toHaveLength(createsBefore);
+
+      const listed = await api("GET", "/api/team-computers");
+      expect(listed.body.computers.find((computer: { id: string }) => computer.id === requestId)).toMatchObject({
+        name, origin: "connected", orgoComputerId: computerId, state: "running",
+      });
+    } finally {
+      await api("PATCH", `/api/team-computers/${requestId}`, { section: null, acknowledgeSharedAccess: true }).catch(() => undefined);
+      managedBoxRows = [];
+      await api("PUT", "/api/config", { orgo: { apiKey: "" } }).catch(() => undefined);
+      boxRouteCalls.length = 0;
+    }
+  });
+
   it("shares one team computer across direct and room turns without overriding explicit destinations", async () => {
     const requestId = randomUUID();
     const section = `Shared machine ${requestId.slice(0, 8)}`;

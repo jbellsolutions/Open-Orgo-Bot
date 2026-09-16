@@ -39,6 +39,15 @@ interface ProbeResult {
   error?: string;
 }
 
+interface BuiltInSuperBrowser {
+  available: boolean;
+  verified?: boolean;
+  version?: string;
+  source?: string;
+  automaticMcpMount?: boolean;
+  reason?: string;
+}
+
 interface McpMessage {
   key: LocaleKey;
   params?: Record<string, string | number>;
@@ -100,6 +109,7 @@ export function McpServersPanel() {
   const [probe, setProbe] = useState<Record<string, ProbeResult>>({});
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  const [superBrowser, setSuperBrowser] = useState<BuiltInSuperBrowser | null>(null);
   const loadGeneration = useRef(0);
 
   // Paste-to-add: the same block Claude Code, Cursor and Claude Desktop
@@ -149,6 +159,7 @@ export function McpServersPanel() {
 
   useEffect(() => {
     void load();
+    void api("/api/super-browser/status").then(setSuperBrowser).catch(() => setSuperBrowser({ available: false, reason: "Setup check failed" }));
     return () => { loadGeneration.current += 1; };
   }, [load]);
 
@@ -279,7 +290,11 @@ export function McpServersPanel() {
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={() => void load()}
+              onClick={() => {
+                void load();
+                setSuperBrowser(null);
+                void api("/api/super-browser/status").then(setSuperBrowser).catch(() => setSuperBrowser({ available: false, reason: "Setup check failed" }));
+              }}
               disabled={busy !== null}
               className="rounded-lg p-2 text-ink-secondary transition-colors hover:bg-raised hover:text-ink disabled:opacity-40"
               aria-label={t("mcp.refreshAria")}
@@ -423,6 +438,27 @@ export function McpServersPanel() {
             </div>
           </div>
         )}
+
+        <div className="mt-5 rounded-2xl border border-accent/25 bg-card px-4 py-4 sm:px-5">
+          <div className="flex items-center gap-3">
+            <div className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", superBrowser?.available ? "bg-success/10 text-success" : "bg-raised text-ink-secondary")}>
+              {superBrowser === null ? <Loader2 size={18} className="animate-spin" /> : <ServerCog size={19} />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[14px] font-medium text-ink">Super Browser — Built-in</span>
+                <span className={cn("rounded-full px-2 py-0.5 text-[10.5px]", superBrowser?.available ? "bg-success/10 text-success" : "bg-raised text-ink-secondary")}>
+                  {superBrowser?.automaticMcpMount ? "Mounted automatically" : superBrowser === null ? "Checking" : "Unavailable"}
+                </span>
+              </div>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
+                {superBrowser?.available
+                  ? `Manifest-verified${superBrowser.version ? ` v${superBrowser.version}` : ""}${superBrowser.source ? ` from ${superBrowser.source}` : ""}. Available automatically to MCP-capable engines and cannot be replaced by a custom server.`
+                  : superBrowser?.reason ?? "Checking the verified bundle…"}
+              </p>
+            </div>
+          </div>
+        </div>
 
         {servers === null ? (
           <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary"><Loader2 size={14} className="animate-spin" /> {t("mcp.loading")}</div>

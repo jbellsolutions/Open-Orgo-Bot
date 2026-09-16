@@ -100,11 +100,13 @@ describe("Super Browser bridge", () => {
         SUPER_BROWSER_STATE_DIR: join(root, "data", "super-browser"),
         ORGO_COMPUTER_ID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         ORGO_API_KEY: "fixture-secret",
+        ORGO_MODEL: "claude-sonnet-4.6",
       },
     });
     const unpinned = superBrowserMcpServer({ installation, dataDir: join(root, "data"), path: "/safe/bin", orgo: { apiKey: "fixture-secret" } });
     expect(unpinned?.env).not.toHaveProperty("ORGO_API_KEY");
     expect(unpinned?.env).not.toHaveProperty("ORGO_COMPUTER_ID");
+    expect(unpinned?.env).not.toHaveProperty("ORGO_MODEL");
   });
 
   it("reserves its built-in name without changing user MCP labels", () => {

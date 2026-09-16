@@ -15,6 +15,9 @@ export interface McpProbeTool {
 export type McpProbeResult =
   | { ok: true; tools: McpProbeTool[] }
   | { ok: false; error: string };
+export type McpToolCallResult =
+  | { ok: true; result: unknown }
+  | { ok: false; error: string };
 
 const MAX_STDOUT_BYTES = 1_048_576;
 const MAX_TOOLS = 100;
@@ -24,6 +27,15 @@ function probeEnvironment(server: StoredMcpServer): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
   stripWorkspaceCredentialEnv(env);
   for (const key of PROVIDER_CREDENTIAL_ENV) delete env[key];
+  // Built-in and custom MCP checks never inherit ambient browser-provider
+  // identities. A caller must pass each credential explicitly in server.env;
+  // in particular, ORGO_COMPUTER_ID must stay paired with ORGO_API_KEY.
+  for (const key of [
+    "AIRTOP_API_KEY", "AIRTOP_API_BASE", "AIRTOP_TIMEOUT_MINUTES", "BROWSER_USE_API_KEY",
+    "BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID", "DECODO_PROXY", "HYPERBROWSER_API_KEY",
+    "HYPERBROWSER_API_BASE", "ORGO_API_KEY", "ORGO_API_BASE", "ORGO_COMPUTER_ID", "ORGO_MODEL",
+    "STEEL_API_KEY", "STEEL_CDP_URL",
+  ]) delete env[key];
   Object.assign(env, server.env);
   return env;
 }
@@ -42,6 +54,92 @@ function redactConfiguredValues(value: string, env: Record<string, string>): str
     if (secret) redacted = redacted.split(secret).join("[redacted]");
   }
   return redacted;
+}
+
+function redactToolResult(value: unknown, env: Record<string, string>, key = "", depth = 0): unknown {
+  if (depth > 12) return "[truncated]";
+  if (typeof value === "string") {
+    if (/(?:^|_)(?:secret|password|token|api_?key|credential|authorization)(?:$|_)/i.test(key) && !/(?:name|env|missing|required)/i.test(key)) {
+      return "[redacted]";
+    }
+    return redactConfiguredValues(value, env).slice(0, 20_000);
+  }
+  if (Array.isArray(value)) return value.slice(0, 200).map(item => redactToolResult(item, env, key, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 200)
+    .map(([childKey, child]) => [childKey, redactToolResult(child, env, childKey, depth + 1)]));
+}
+
+/** Call one named tool on a short-lived stdio MCP server. The child receives
+ * only the explicitly supplied provider credentials, is bounded and reaped,
+ * and its structured response is recursively redacted before it leaves the
+ * server process. */
+export function callMcpTool(
+  server: StoredMcpServer,
+  name: string,
+  args: Record<string, unknown> = {},
+  timeoutMs = 30_000,
+  signal?: AbortSignal,
+): Promise<McpToolCallResult> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve({ ok: false, error: publicProbeError("cancelled") });
+    let child: ReturnType<typeof spawnCli>;
+    try {
+      child = spawnCli(server.command, server.args, { cwd: process.cwd(), env: probeEnvironment(server), stdio: ["pipe", "pipe", "pipe"] });
+    } catch {
+      return resolve({ ok: false, error: publicProbeError("spawn") });
+    }
+    let settled = false;
+    let initialized = false;
+    let stdoutBytes = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => finish({ ok: false, error: publicProbeError("cancelled") });
+    const finish = (result: McpToolCallResult) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      killCliTree(child);
+      resolve(result);
+    };
+    const write = (frame: unknown) => {
+      try { child.stdin.write(`${JSON.stringify(frame)}\n`); }
+      catch { finish({ ok: false, error: publicProbeError("closed") }); }
+    };
+    const splitter = createLineSplitter((line) => {
+      if (settled || !line.trim()) return;
+      let frame: unknown;
+      try { frame = JSON.parse(line); } catch { return; }
+      if (!frame || typeof frame !== "object") return;
+      const value = frame as Record<string, unknown>;
+      if (value.id === 1 && value.result && !initialized) {
+        initialized = true;
+        write({ jsonrpc: "2.0", method: "notifications/initialized" });
+        write({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } });
+        return;
+      }
+      if (value.id !== 2) return;
+      if (value.error) return finish({ ok: false, error: publicProbeError("protocol") });
+      const result = value.result as Record<string, unknown> | undefined;
+      if (!result || result.isError === true) {
+        const structured = result?.structuredContent as Record<string, unknown> | undefined;
+        const message = typeof structured?.error === "string" ? redactConfiguredValues(structured.error, server.env).slice(0, 1_000) : publicProbeError("protocol");
+        return finish({ ok: false, error: message });
+      }
+      finish({ ok: true, result: redactToolResult(result.structuredContent ?? result, server.env) });
+    });
+    timer = setTimeout(() => finish({ ok: false, error: publicProbeError("timeout") }), timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBytes += chunk.byteLength;
+      if (stdoutBytes > MAX_STDOUT_BYTES) return finish({ ok: false, error: publicProbeError("protocol") });
+      splitter.push(chunk);
+    });
+    child.stderr.resume();
+    child.once("error", () => finish({ ok: false, error: publicProbeError("spawn") }));
+    child.once("close", () => finish({ ok: false, error: publicProbeError("closed") }));
+    write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Open Orgo Bot", version: "check" } } });
+  });
 }
 
 /** Start one stdio server long enough to prove the MCP handshake and list its

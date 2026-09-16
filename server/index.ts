@@ -80,13 +80,24 @@ import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
 import * as orgo from "./orgo.ts";
 import {
+  checkSuperBrowserSetup,
+  installSuperBrowserChromium,
   mergeSuperBrowserMcp,
   superBrowserMcpServer,
   superBrowserSummary,
   SUPER_BROWSER_MCP_NAME,
+  testSuperBrowserRoute,
   userMcpNames,
 } from "./super-browser.ts";
-import { TeamComputers, teamComputerAssignment, teamComputerCreate, teamComputerOwner, type TeamComputerRecord } from "./team-computers.ts";
+import {
+  TeamComputers,
+  teamComputerAdopt,
+  teamComputerAssignment,
+  teamComputerCreate,
+  teamComputerInspect,
+  teamComputerOwner,
+  type TeamComputerRecord,
+} from "./team-computers.ts";
 import type { TeamComputersPayload } from "../shared/team-computer.ts";
 import { orgoCreateRecoverySnapshot, retireDeletedOrgoCreate } from "./orgo-create-idempotency.ts";
 import {
@@ -3581,14 +3592,15 @@ function assertTeamComputerChangeIdle(before: BotRecord, after: BotRecord): void
 
 async function teamComputersPayload(): Promise<TeamComputersPayload> {
   const entries = teamComputers.list();
-  const inventory = await orgo.listManagedOrgos(cfg, managedOrgoOwners());
+  const inventory = await orgo.listAssignableOrgos(cfg, managedOrgoOwners());
   return {
     configured: inventory.configured,
     ...(inventory.problem ? { problem: inventory.problem } : {}),
     computers: entries.map(entry => {
       const machine = inventory.instances.find(instance => instance.ownerBotId === teamComputerOwner(entry.id));
       return {
-        id: entry.id, name: entry.name, section: entry.section,
+        id: entry.id, name: entry.origin === "connected" ? machine?.name ?? entry.name : entry.name, section: entry.section,
+        origin: entry.origin, ...(entry.orgoComputerId ? { orgoComputerId: entry.orgoComputerId } : {}),
         held: computerControl.snapshot(teamComputerOwner(entry.id)).held,
         state: orgoLifecycleBusyBots.has(teamComputerOwner(entry.id)) ? "working" : machine?.state ?? (inventory.available ? "missing" : "unavailable"),
         ...(entry.problem || inventory.problem ? { problem: entry.problem || inventory.problem! } : {}),
@@ -3607,11 +3619,12 @@ async function attachTeamOrgo(computer: TeamComputerRecord, botId: string, owner
   if (computerControl.snapshot(ownerId).held) throw new Error("Release human control of the team computer before starting another turn");
   bindTurnComputer(owner, `computer:orgo-bot:${ownerId}`, true);
   teamComputerTurns.set(owner.threadId, { owner, computerId: computer.id, botId, remoteAgent });
-  let machine = await orgo.findOrgo(cfg, ownerId);
+  let machine = await orgo.findOrgo(cfg, ownerId, computer.orgoComputerId);
   if (!machine) throw new Error("The team's Orgo computer is missing; explicitly create or retry it from the Team map");
+  if (!computer.orgoComputerId) teamComputers.pinOrgoComputer(computer.id, machine.id);
   bindTurnComputer(owner, `computer:orgo:${machine.id}`, true);
   const action = orgo.orgoTurnLifecycleAction({ explicitCloud: true, canMount: true, state: typeof machine.state === "string" ? machine.state : null });
-  if (action === "wake") machine = await orgo.readyOrgo(cfg, ownerId);
+  if (action === "wake") machine = await orgo.readyOrgo(cfg, ownerId, 60_000, computer.orgoComputerId ?? machine.id);
   if (!machine || orgo.orgoTurnLifecycleAction({ explicitCloud: true, canMount: true, state: typeof machine.state === "string" ? machine.state : null }) !== "attach") {
     throw new Error("The team computer is not ready; check it in the Team map");
   }
@@ -3639,7 +3652,7 @@ function managedOrgoOwners(): orgo.ManagedOrgoOwner[] {
       activeVpsThreads.has(bot.id) ||
       computerControl.snapshot(bot.id).held,
   })), ...teamComputers.list().map(computer => ({
-    botId: teamComputerOwner(computer.id), name: computer.name, inUse: teamComputerInUse(computer),
+    botId: teamComputerOwner(computer.id), name: computer.name, computerId: computer.orgoComputerId, inUse: teamComputerInUse(computer),
   }))];
 }
 
@@ -14766,11 +14779,103 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 200, { bot: fresh });
     }
 
+    // The built-in Super Browser is a verified MCP bundle, not a user-authored
+    // custom server. Health checks are redacted; installs are explicit; the
+    // Orgo live test is pinned to General's exact stored UUID.
+    if (path === "/api/super-browser/status" && method === "GET") {
+      res.setHeader("cache-control", "private, no-store");
+      const general = teamComputers.forSection(undefined);
+      return json(res, 200, await checkSuperBrowserSetup({
+        dataDir: DATA_DIR,
+        path: augmentedPath(),
+        orgo: { configured: orgo.orgoConfigured(cfg), computerId: general?.orgoComputerId },
+      }));
+    }
+    if ((path === "/api/super-browser/runtime/install" || path === "/api/super-browser/test") && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      if (path.endsWith("/runtime/install")) {
+        const parsed = z.object({ component: z.literal("playwright-chromium"), acknowledgeDownload: z.literal(true) }).strict().safeParse(body);
+        if (!parsed.success) return json(res, 400, { error: "Confirm the Playwright Chromium download before installing it" });
+        return json(res, 200, await installSuperBrowserChromium({ dataDir: DATA_DIR, path: augmentedPath() }));
+      }
+      const parsed = z.object({ provider: z.enum(["playwright", "orgo"]) }).strict().safeParse(body);
+      if (!parsed.success) return json(res, 400, { error: "Choose the playwright or orgo Super Browser test" });
+      if (parsed.data.provider === "playwright") {
+        return json(res, 200, await testSuperBrowserRoute({ provider: "playwright", dataDir: DATA_DIR, path: augmentedPath() }));
+      }
+      const general = teamComputers.forSection(undefined);
+      if (!general?.orgoComputerId || !cfg.orgo?.apiKey?.trim()) {
+        return json(res, 409, { error: "Assign a verified Orgo computer to the General team before testing this route" });
+      }
+      return json(res, 200, await testSuperBrowserRoute({
+        provider: "orgo",
+        dataDir: DATA_DIR,
+        path: augmentedPath(),
+        orgo: {
+          computerId: general.orgoComputerId,
+          apiKey: cfg.orgo.apiKey,
+          readDesktop: async () => {
+            const screenshot = await orgo.screenshotOrgo(cfg, teamComputerOwner(general.id), general.orgoComputerId);
+            return { format: screenshot.format, bytes: Buffer.byteLength(screenshot.png, "base64") };
+          },
+        },
+      }));
+    }
+
     // Named team Orgoes use real independent ownership, never a hidden bot or
     // an arbitrary provider id. These new routes remain admin-only by default.
     if (path === "/api/team-computers" && method === "GET") {
       res.setHeader("cache-control", "private, no-store");
       return json(res, 200, await teamComputersPayload());
+    }
+    if ((path === "/api/team-computers/inspect" || path === "/api/team-computers/adopt") && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const parsed = path.endsWith("/inspect") ? teamComputerInspect.safeParse(body) : teamComputerAdopt.safeParse(body);
+      if (!parsed.success) {
+        return json(res, 400, {
+          error: path.endsWith("/inspect")
+            ? "Enter a valid Orgo computer UUID. The account API key belongs in Connections, not this field."
+            : "Provide requestId, the verified computerId, its exact confirmName, and acknowledgeSharedAccess: true",
+        });
+      }
+      if (!orgo.orgoConfigured(cfg)) return json(res, 409, { error: "Connect the Orgo account in Settings before inspecting a computer" });
+      const inventory = await orgo.listAssignableOrgos(cfg, managedOrgoOwners());
+      if (!inventory.available) throw Object.assign(new Error(inventory.problem ?? "Orgo computer inventory is unavailable"), { status: 503 });
+      const computer = inventory.instances.find(candidate => candidate.computerId.toLowerCase() === parsed.data.computerId);
+      if (!computer) return json(res, 404, { error: "That computer is not accessible through the configured Orgo account" });
+      const owner = computer.ownerBotId ? managedOrgoOwners().find(candidate => candidate.botId === computer.ownerBotId) : undefined;
+      const transitioning = /^(creating|starting|restarting|updating|stopping)$/i.test(computer.state);
+      if (path.endsWith("/inspect")) {
+        return json(res, 200, {
+          computerId: computer.computerId,
+          name: computer.name,
+          workspaceId: computer.workspaceId,
+          workspaceName: computer.workspaceName,
+          state: computer.state,
+          currentOwner: computer.ownerBotId ? { id: computer.ownerBotId, name: computer.ownerName } : null,
+          available: computer.available && !transitioning && !owner?.inUse,
+          busy: transitioning || Boolean(owner?.inUse),
+        });
+      }
+      const adoption = parsed.data as z.infer<typeof teamComputerAdopt>;
+      if (adoption.confirmName !== computer.name) return json(res, 409, { error: "The confirmation name must exactly match the verified Orgo computer name" });
+      const existing = teamComputers.get(adoption.requestId);
+      const existingOwnerId = existing ? teamComputerOwner(existing.id) : null;
+      if (existing && (existing.orgoComputerId !== adoption.computerId || existing.name !== computer.name || existing.origin !== "connected")) {
+        return json(res, 409, { error: "This connection id already names a different computer" });
+      }
+      if (computer.ownerBotId && computer.ownerBotId !== existingOwnerId) {
+        return json(res, 409, { error: `This computer is already assigned to ${computer.ownerName ?? "another Open Orgo Bot owner"}` });
+      }
+      if (!existing && (transitioning || owner?.inUse)) return json(res, 409, { error: "This computer is busy; wait for it to become idle before connecting it" });
+      const adopted = teamComputers.adopt(computer.name, computer.computerId, adoption.requestId);
+      return json(res, existing ? 200 : 201, { id: adopted.id, computer: adopted });
     }
     m = path.match(/^\/api\/team-computers(?:\/([\w-]+)(?:\/(provision|join|sleep|control))?)?$/);
     if (m) {
@@ -14817,7 +14922,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         checkAssignment();
         const release = claimTeamComputerLifecycle(found);
         try {
-          if (section !== null && !(await orgo.findOrgo(cfg, teamComputerOwner(found.id)))) return json(res, 409, { error: "Create or retry this computer before assigning it to a team" });
+          if (section !== null && !(await orgo.findOrgo(cfg, teamComputerOwner(found.id), found.orgoComputerId))) return json(res, 409, { error: "Create or retry this computer before assigning it to a team" });
           checkAssignment();
           if (teamComputerInUse(found)) return json(res, 409, { error: "This team computer became busy; stop its work before assigning it" });
           teamComputers.assign(found.id, section);
@@ -14831,7 +14936,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const computer = teamComputers.create(parsed.data.name, parsed.data.requestId);
         const release = claimTeamComputerLifecycle(computer);
         try {
-          await orgo.provisionOrgo(cfg, teamComputerOwner(computer.id), computer.name);
+          const provisioned = await orgo.provisionOrgo(cfg, teamComputerOwner(computer.id), computer.name, computer.orgoComputerId);
+          teamComputers.pinOrgoComputer(computer.id, provisioned.computerId);
           teamComputers.setProblem(computer.id);
           return json(res, 201, { id: computer.id });
         } catch (error) {
@@ -14848,14 +14954,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           if (orgoLifecycleBusyBots.has(key)) return json(res, 409, { error: "Wait for this computer's action to finish" });
           if (!computerControl.snapshot(key).held) return json(res, 409, { error: "Take control before opening this shared desktop" });
           const release = claimBotComputerLifecycle(key);
-          try { return json(res, 200, await orgo.joinReadyOrgo(cfg, key)); }
+          try { return json(res, 200, await orgo.joinReadyOrgo(cfg, key, found.orgoComputerId)); }
           finally { release(); }
         }
         const release = claimTeamComputerLifecycle(found);
         try {
           const result = action === "provision"
-            ? await orgo.provisionOrgo(cfg, teamComputerOwner(found.id), found.name)
-            : await orgo.sleepOrgo(cfg, teamComputerOwner(found.id));
+            ? await orgo.provisionOrgo(cfg, teamComputerOwner(found.id), found.name, found.orgoComputerId)
+            : await orgo.sleepOrgo(cfg, teamComputerOwner(found.id), found.orgoComputerId);
+          if (action === "provision" && "computerId" in result) teamComputers.pinOrgoComputer(found.id, result.computerId);
           teamComputers.setProblem(found.id);
           return json(res, 200, result);
         } catch (error) {
@@ -16238,7 +16345,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const teamComputer = inheritedTeamComputer(bot);
-      if (teamComputer) return json(res, 200, { backend: "orgo", teamComputer: { id: teamComputer.id, name: teamComputer.name }, ...(await orgo.orgoStatus(cfg, teamComputerOwner(teamComputer.id))) });
+      if (teamComputer) return json(res, 200, {
+        backend: "orgo",
+        teamComputer: { id: teamComputer.id, name: teamComputer.name, origin: teamComputer.origin, orgoComputerId: teamComputer.orgoComputerId },
+        ...(await orgo.orgoStatus(cfg, teamComputerOwner(teamComputer.id), teamComputer.orgoComputerId)),
+      });
       if (bot.cloudBackend === "vps") {
         return json(res, 200, { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) });
       }
@@ -16338,9 +16449,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (m[2] === "join" && !computerControl.snapshot(key).held) return json(res, 409, { error: "Take control before opening this shared desktop" });
         const release = m[2] === "sleep" ? claimTeamComputerLifecycle(teamComputer) : claimBotComputerLifecycle(key);
         try {
-          if (m[2] === "join") return json(res, 200, await orgo.joinReadyOrgo(cfg, key));
-          if (m[2] === "screenshot") return json(res, 200, await orgo.screenshotOrgo(cfg, key));
-          return json(res, 200, await orgo.sleepOrgo(cfg, key));
+          if (m[2] === "join") return json(res, 200, await orgo.joinReadyOrgo(cfg, key, teamComputer.orgoComputerId));
+          if (m[2] === "screenshot") return json(res, 200, await orgo.screenshotOrgo(cfg, key, teamComputer.orgoComputerId));
+          return json(res, 200, await orgo.sleepOrgo(cfg, key, teamComputer.orgoComputerId));
         } finally { release(); }
       }
       if (bot.cloudBackend === "vps") {

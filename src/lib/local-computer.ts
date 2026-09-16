@@ -83,6 +83,16 @@ const READY_BOX_STATES = new Set(["idle", "ready", "running"]);
 export function isReadyOrgoState(state: string | null | undefined): boolean {
   return typeof state === "string" && READY_BOX_STATES.has(state);
 }
+
+/** Accept the current server shape while remaining compatible with clients
+ * that may briefly overlap an older nested `orgo` response during updates. */
+export function orgoStateFromComputerStatus(status: {
+  computer?: { state?: unknown } | null;
+  orgo?: { state?: unknown } | null;
+}): string | null {
+  const state = status.computer?.state ?? status.orgo?.state;
+  return typeof state === "string" ? state : null;
+}
 const SLEEPING_BOX_STATES = new Set(["archived", "stopped"]);
 
 /** Mirror the turn router's Orgo choice without letting a passive panel open
@@ -134,8 +144,9 @@ export function resolveOrgoPanelAction({
 }
 
 /** A stale ready phase can survive one render while the selected bot or its
- * destination changes. Keep every cloud preview POST behind the durable,
- * explicit Cloud choice as well as the resolved phase. */
+ * destination changes. Keep private previews behind the durable explicit
+ * Cloud choice; an inherited team computer is already an administrator-
+ * verified grant and may use the same UUID-pinned screenshot endpoint. */
 export function shouldPollCloudPreview(
   {
     computer,
@@ -145,6 +156,7 @@ export function shouldPollCloudPreview(
     resolvedBotId,
     resolvedComputer,
     resolvedCloudBackend,
+    teamComputer = false,
   }: {
     computer: Bot["computer"];
     cloudBackend: NonNullable<Bot["cloudBackend"]>;
@@ -153,13 +165,20 @@ export function shouldPollCloudPreview(
     resolvedBotId: string | null;
     resolvedComputer: Bot["computer"] | null;
     resolvedCloudBackend: Bot["cloudBackend"] | null;
+    teamComputer?: boolean;
   },
 ): boolean {
-  return computer === "cloud"
-    && phase === "ready"
-    && resolvedBotId === botId
-    && resolvedComputer === "cloud"
-    && resolvedCloudBackend === cloudBackend;
+  const current = resolvedBotId === botId && resolvedCloudBackend === cloudBackend;
+  return current && (
+    (computer === "cloud" && phase === "ready" && resolvedComputer === "cloud") ||
+    (computer === undefined && phase === "team-orgo" && teamComputer)
+  );
+}
+
+/** macOS permission repair belongs only to the local-Mac destination. Cloud,
+ * team Orgo, Local VM and browser-only routes must never open that loop. */
+export function shouldShowLocalControl(phase: string): boolean {
+  return phase === "local" || phase === "local-unavailable";
 }
 
 /** A computer effect may render optimistic profile state while its PATCH is

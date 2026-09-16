@@ -6,9 +6,11 @@ import {
   linuxAutoDescription,
   localComputerDisabledReason,
   localComputerSelectable,
+  orgoStateFromComputerStatus,
   persistedComputerSelectionMatches,
   resolveOrgoPanelAction,
   shouldPollCloudPreview,
+  shouldShowLocalControl,
 } from "./local-computer";
 
 describe("local computer UI eligibility", () => {
@@ -126,6 +128,20 @@ describe("local computer UI eligibility", () => {
     }
     expect(resolveOrgoPanelAction({ computer: "cloud", configured: true, boxState: "idle",
       canUseCloud: true, autoLocal: true, teamComputer: true })).toBe("ensure-orgo");
+  });
+
+  it("reads the current Orgo status shape and tolerates an older nested response", () => {
+    expect(orgoStateFromComputerStatus({ computer: { state: "running" } })).toBe("running");
+    expect(orgoStateFromComputerStatus({ orgo: { state: "ready" } })).toBe("ready");
+    expect(orgoStateFromComputerStatus({ computer: null, orgo: null })).toBeNull();
+  });
+
+  it("shows macOS permission repair only for the local-Mac destination", () => {
+    expect(shouldShowLocalControl("local")).toBe(true);
+    expect(shouldShowLocalControl("local-unavailable")).toBe(true);
+    for (const phase of ["team-orgo", "ready", "vm", "browser", "off", "checking"]) {
+      expect(shouldShowLocalControl(phase), phase).toBe(false);
+    }
   });
 
   it("never creates a missing Orgo merely because an Auto panel opened", () => {
@@ -251,6 +267,16 @@ describe("local computer UI eligibility", () => {
     expect(shouldPollCloudPreview({ ...ready, resolvedComputer: undefined })).toBe(false);
     expect(shouldPollCloudPreview({ ...ready, cloudBackend: "vps" })).toBe(false);
     expect(shouldPollCloudPreview({ ...ready, resolvedCloudBackend: "vps" })).toBe(false);
+    const shared = {
+      ...ready,
+      computer: undefined,
+      phase: "team-orgo",
+      resolvedComputer: null,
+      teamComputer: true,
+    };
+    expect(shouldPollCloudPreview(shared)).toBe(true);
+    expect(shouldPollCloudPreview({ ...shared, teamComputer: false })).toBe(false);
+    expect(shouldPollCloudPreview({ ...shared, resolvedBotId: "bot-b" })).toBe(false);
   });
 
   it("rejects stale persisted selections in both cloud-backend switch directions", () => {

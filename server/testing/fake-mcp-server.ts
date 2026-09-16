@@ -27,5 +27,19 @@ else {
         }] },
       })}\n`);
     }
+    if (frame.method === "tools/call") {
+      process.stdout.write(`${JSON.stringify({
+        jsonrpc: "2.0",
+        id: frame.id,
+        result: {
+          content: [{ type: "text", text: "fixture" }],
+          structuredContent: {
+            status: "passed",
+            echoed: process.env.FAKE_MCP_RESULT ?? "safe",
+            api_key: process.env.FAKE_MCP_RESULT ?? "safe",
+          },
+        },
+      })}\n`);
+    }
   });
 }

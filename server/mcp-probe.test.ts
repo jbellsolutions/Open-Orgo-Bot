@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { probeMcpServer } from "./mcp-probe.ts";
+import { callMcpTool, probeMcpServer } from "./mcp-probe.ts";
 
 const fakeServer = fileURLToPath(new URL("./testing/fake-mcp-server.ts", import.meta.url));
 
@@ -64,5 +64,16 @@ describe("custom MCP probe", () => {
       tools: [{ name: "read_notes", description: "[redacted]" }],
     });
     expect(JSON.stringify(result)).not.toContain("very-secret-value");
+  });
+
+  it("calls one bounded MCP tool and redacts structured secret values", async () => {
+    const result = await callMcpTool({
+      command: process.execPath,
+      args: ["--experimental-strip-types", fakeServer],
+      env: { FAKE_MCP_RESULT: "never-return-this" },
+      enabled: true,
+    }, "browser_doctor", {}, 2_000);
+    expect(result).toEqual({ ok: true, result: { status: "passed", echoed: "[redacted]", api_key: "[redacted]" } });
+    expect(JSON.stringify(result)).not.toContain("never-return-this");
   });
 });

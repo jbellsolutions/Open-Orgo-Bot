@@ -27,10 +27,11 @@ provider with Orgo. A built-in bridge also discovers a locally installed,
 manifest-verified Super Browser bundle for advanced browser routing. It is a
 focused open-source fork—not a separate rewrite.
 
-Each bot gets its own conversation, model, memory, tools, connected apps, and
-optional remote Linux desktop. You can watch the desktop live, take control,
-run shell commands, and stop or restart the computer from the existing computer
-panel.
+Each bot gets its own conversation, model, memory, tools, and connected apps on
+the Mac. A bot can have a private Orgo desktop, or every Auto bot in one team
+can share a named Orgo workstation sequentially. You can watch the desktop
+live, take control, run shell commands, and stop or restart it from the existing
+computer panel.
 
 ## Install on macOS
 
@@ -66,14 +67,23 @@ download checksum matches the checksum published with the GitHub release.
 
 1. Open **Settings → Engines** and confirm Hermes is available. Open Orgo Bot
    uses the existing Hermes login and model configuration on your Mac.
-2. Open **Settings → API keys** and add an Orgo API key if you want remote
-   computers. Chat and local tools work without an Orgo account.
-3. In **Settings → Connections**, confirm Super Browser says **Ready** if its
-   bundle is installed in Codex or the app's resources.
+2. Open **Settings → Connections** and add the account-level Orgo API key once
+   if you want remote computers. Chat and local tools work without Orgo.
+3. In **Settings → Connections → Super Browser — Built-in**, use **Check
+   setup**. If local Playwright reports a missing runtime, **Install local
+   Chromium** performs one confirmed download and immediately runs the local
+   fixture test. No generic Super Browser token is required.
 4. Create a bot, choose a model, and send a message.
 5. Open the bot's **Computer** panel, select **Cloud → Orgo**, and choose one
    of your existing Orgo computers. A computer already assigned to another
    agent is labeled and cannot be selected.
+
+To give a whole team one workstation, open the **Team map → Computers →
+Connect existing Orgo computer**, paste only the computer UUID, verify the real
+name/workspace/state, type its exact name, and assign it to the team. Bots set
+to **Auto** then receive the same exact UUID one turn at a time. Connecting an
+existing computer never calls Orgo's creation endpoint or consumes another
+computer slot.
 
 Secrets entered through the desktop app use the existing encrypted credential
 store. Each agent saves one verified Orgo computer UUID. Renaming the computer
@@ -88,7 +98,7 @@ computer.
 | Desktop application | Existing Electron UI, native Mac window, permissions, computer panel, updater architecture, and DMG packaging |
 | Default agent | Hermes; the other upstream engines remain available |
 | Cloud computer | Orgo replaces Box across discovery, creation, screen capture, live desktop, input, shell, start, stop, restart, and deletion |
-| Browser routing | A verified Super Browser MCP bridge is mounted automatically; the app's built-in browser remains the normal web execution surface |
+| Browser routing | A fixed, verified **Super Browser — Built-in** MCP bridge is mounted automatically; setup, Chromium install, and pinned-route tests live in Connections while the existing Browser tab stays unchanged |
 | Identity | Independent name, artwork, bundle ID, URL scheme, storage directory, and release channel |
 | Licensing | Apache-2.0 open-source edition only; upstream `enterprise/` is excluded |
 | Upstream base | OpenMausBot `v0.1.80` (`58b138ff329f78d896286983824c912f50b94faf`) |
@@ -97,9 +107,9 @@ computer.
 
 - **A real desktop app.** No browser wrapper or replacement interface.
 - **Hermes by default.** Use open models through your existing Hermes setup.
-- **One Orgo computer per bot.** Persistent remote desktops with screenshots,
-  interactive viewing, shell access, and lifecycle controls. Existing Orgo
-  computers are discoverable even when they were created outside this app.
+- **Private or shared Orgo computers.** Bind one exact UUID to a bot, or assign
+  one connected workstation to all Auto bots in a team. Existing computers are
+  verified across accessible Orgo workspaces without provisioning another VM.
 - **Super Browser routing.** Hermes can plan provider-heavy, anti-bot, proxy,
   fleet, and research workflows while ordinary pages stay in the app's fast
   built-in browser.
@@ -128,6 +138,19 @@ The three pieces have distinct jobs:
 4. **Orgo is the full computer.** Desktop apps, Linux files, and shell work go
    to the bot's assigned Orgo machine.
 
+The Open Orgo Bot agents themselves—Chief of Staff, Pickle, Momo, and their
+conversations, memory, and Hermes sessions—remain hosted by this Mac app. The
+Orgo computer is their remote screen and Linux workstation; a Hermes or Studio
+agent separately installed inside that VM is a different agent system. It does
+not inherit the Mac app's conversation or lease.
+
+One Orgo computer has one screen. The app's whole-turn **Open Orgo Bot lease**
+prevents two Mac-hosted bots from driving the shared team screen at once.
+Resident VM agents, SSH sessions, Tailscale users, and other external automation
+are outside that lease and may still contend for the screen. Open Orgo Bot shows
+this warning for connected workstations and leaves those resident services,
+profiles, browser data, and files untouched.
+
 Every turn receives an app-owned MCP computer bridge pinned to the selected
 Orgo UUID. The model never gets a free-form computer-id field, so it cannot
 switch itself to another agent's machine. Shell commands use Orgo's
@@ -144,6 +167,13 @@ passes an Orgo key to Super Browser unless the same turn already owns a
 verified app-managed Orgo computer UUID. This disables Super Browser's
 otherwise useful create-or-discover fallback and prevents an accidental second
 billable computer.
+
+The MCP Servers screen and every bot's Access view show a fixed **Super Browser
+— Built-in** row. It cannot be shadowed by a custom server. Connections reports
+the verified bundle source/version, automatic mount, local Playwright runtime,
+optional provider credential names (never values), and the Orgo route supplied
+for the assigned turn. The read-only Orgo test is pinned to General's stored
+UUID and cannot discover or create a replacement computer.
 
 The public Open Orgo Bot repository contains the bridge, not a copy of the
 separately maintained Super Browser source bundle. This avoids silently

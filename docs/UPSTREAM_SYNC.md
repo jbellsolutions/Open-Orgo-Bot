@@ -13,8 +13,10 @@ Every integration must preserve:
 2. Hermes as the default engine while retaining the other supported engines.
 3. Orgo as the cloud-computer provider, with no Box runtime adapter or token.
 4. Encrypted desktop credential storage and verified Orgo computer UUIDs.
-5. The desktop mutation-header compatibility contract used by installed apps.
-6. Apache-2.0 notices and complete exclusion of upstream `enterprise/`.
+5. Exact-ID, fail-closed team workstations and the one-turn Open Orgo Bot lease.
+6. The manifest-verified built-in Super Browser mount and its approval gates.
+7. The desktop mutation-header compatibility contract used by installed apps.
+8. Apache-2.0 notices and complete exclusion of upstream `enterprise/`.
 
 ## Update flow
 

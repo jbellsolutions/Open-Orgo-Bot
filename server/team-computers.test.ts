@@ -3,7 +3,14 @@ import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { TeamComputers, teamComputerAssignment, teamComputerCreate, teamComputerOwner } from "./team-computers.ts";
+import {
+  TeamComputers,
+  teamComputerAdopt,
+  teamComputerAssignment,
+  teamComputerCreate,
+  teamComputerInspect,
+  teamComputerOwner,
+} from "./team-computers.ts";
 
 const directories: string[] = [];
 const fixture = () => {
@@ -49,6 +56,34 @@ describe("named team computer ownership", () => {
     expect(new TeamComputers(file, environmentId).forSection("Design")?.id).toBe(two.id);
   });
 
+  it("migrates created v1 records and preserves their assignment", () => {
+    const { file, environmentId } = fixture();
+    const id = randomUUID();
+    writeFileSync(file, JSON.stringify({
+      version: 1,
+      environmentId,
+      computers: [{ id, name: "Legacy desktop", section: "Design", createdAt: 123 }],
+    }));
+    const migrated = new TeamComputers(file, environmentId);
+    expect(migrated.get(id)).toMatchObject({ name: "Legacy desktop", section: "Design", origin: "created" });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ version: 2, computers: [{ id, origin: "created" }] });
+  });
+
+  it("adopts and pins exact provider UUIDs idempotently without duplicate ownership", () => {
+    const { registry } = fixture();
+    const requestId = randomUUID();
+    const computerId = randomUUID();
+    const adopted = registry.adopt("Existing Orgo", computerId, requestId);
+    expect(adopted).toMatchObject({ id: requestId, name: "Existing Orgo", origin: "connected", orgoComputerId: computerId, section: null });
+    expect(registry.adopt("Existing Orgo", computerId, requestId)).toEqual(adopted);
+    expect(() => registry.adopt("Different", computerId, requestId)).toThrow(/different computer/);
+    expect(() => registry.adopt("Existing Orgo", computerId, randomUUID())).toThrow(/already connected/);
+    const created = registry.create("Created Orgo");
+    const createdComputerId = randomUUID();
+    expect(registry.pinOrgoComputer(created.id, createdComputerId)).toMatchObject({ origin: "created", orgoComputerId: createdComputerId });
+    expect(() => registry.pinOrgoComputer(created.id, computerId)).toThrow(/already connected/);
+  });
+
   it("distinguishes General from unassigned and treats prototype team names as data", () => {
     const { registry } = fixture();
     const one = registry.create("One");
@@ -79,6 +114,9 @@ describe("named team computer ownership", () => {
     expect(teamComputerCreate.safeParse({ requestId: randomUUID(), name: "One", acknowledgeCost: true }).success).toBe(true);
     expect(teamComputerAssignment.safeParse({ section: "Design" }).success).toBe(false);
     expect(teamComputerAssignment.safeParse({ section: null, acknowledgeSharedAccess: true }).success).toBe(true);
+    expect(teamComputerInspect.safeParse({ computerId: randomUUID() }).success).toBe(true);
+    expect(teamComputerInspect.safeParse({ computerId: "sk_live_not-a-computer-id" }).success).toBe(false);
+    expect(teamComputerAdopt.safeParse({ requestId: randomUUID(), computerId: randomUUID(), confirmName: "Existing", acknowledgeSharedAccess: true }).success).toBe(true);
   });
 
   it.each(["{bad", "[]", JSON.stringify({ version: 2, computers: [] })])("fails closed for malformed durable data %s", contents => {

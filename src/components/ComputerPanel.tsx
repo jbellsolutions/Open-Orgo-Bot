@@ -55,8 +55,10 @@ import {
   localComputerSelectable,
   persistedComputerSelectionMatches,
   isReadyOrgoState,
+  orgoStateFromComputerStatus,
   resolveOrgoPanelAction,
   shouldPollCloudPreview,
+  shouldShowLocalControl,
 } from "@/lib/local-computer";
 import {
   readComputerPanelView,
@@ -209,7 +211,7 @@ export function ComputerPanel({
     orgoComputerId?: string;
   } | null>(null);
   const [teamComputer, setTeamComputer] = useState<{
-    id: string; name: string; botId: string; section: string;
+    id: string; name: string; origin?: "created" | "connected"; orgoComputerId?: string; botId: string; section: string;
   } | null>(null);
   const cloudBackend = bot.cloudBackend ?? "orgo";
   const computerSelectionPersisted = Boolean(
@@ -238,6 +240,7 @@ export function ComputerPanel({
     resolvedBotId: resolvedComputerSelection?.botId ?? null,
     resolvedComputer: resolvedComputerSelection?.computer ?? null,
     resolvedCloudBackend: resolvedComputerSelection?.cloudBackend ?? null,
+    teamComputer: Boolean(currentTeamComputer),
   });
   const updateComputerSelection = useCallback((patch: {
     computer?: Bot["computer"] | null;
@@ -575,6 +578,7 @@ export function ComputerPanel({
     api(`/api/bots/${bot.id}/computer`)
       .then((status) => {
         if (!alive) return;
+        const providerState = orgoStateFromComputerStatus(status);
         const autoLocal = autoSelectsLocalComputer({
           platform: capabilities.host.platform,
           computer: bot.computer,
@@ -584,7 +588,7 @@ export function ComputerPanel({
         const action = resolveOrgoPanelAction({
           computer: bot.computer,
           configured: Boolean(status.configured),
-          boxState: typeof status.orgo?.state === "string" ? status.orgo.state : null,
+          boxState: providerState,
           canUseCloud: cloudSupported,
           autoLocal,
           teamComputer: typeof status.teamComputer?.id === "string" && typeof status.teamComputer?.name === "string",
@@ -598,8 +602,9 @@ export function ComputerPanel({
         });
         if (action === "team-orgo") {
           setTeamComputer({ id: status.teamComputer.id, name: status.teamComputer.name,
+            origin: status.teamComputer.origin, orgoComputerId: status.teamComputer.orgoComputerId,
             botId: bot.id, section: bot.section?.trim() ?? "" });
-          setOrgoState(typeof status.orgo?.state === "string" ? status.orgo.state : status.configured ? "missing" : "unavailable");
+          setOrgoState(providerState ?? (status.configured ? "missing" : "unavailable"));
           setError(typeof status.problem === "string" ? status.problem : null);
           setPhase("team-orgo");
           return;
@@ -607,13 +612,13 @@ export function ComputerPanel({
         if (action === "attach-ready-orgo") {
           // The active turn owns lifecycle changes; the panel can safely
           // attach to the already-running desktop and follow its frames.
-          setOrgoState(typeof status.orgo?.state === "string" ? status.orgo.state : null);
+          setOrgoState(providerState);
           setPhase("ready");
           return;
         }
         if (action !== "ensure-orgo") {
           if (action === "show-ready-orgo" || action === "show-sleeping-orgo" || action === "show-pending-orgo") {
-            setOrgoState(typeof status.orgo?.state === "string" ? status.orgo.state : null);
+            setOrgoState(providerState);
           }
           setPhase(action);
           return;
@@ -693,7 +698,7 @@ export function ComputerPanel({
       api(`/api/bots/${bot.id}/computer`)
         .then((status) => {
           if (!alive) return;
-          const state = typeof status.orgo?.state === "string" ? status.orgo.state : null;
+          const state = orgoStateFromComputerStatus(status);
           if (isReadyOrgoState(state)) {
             setOrgoState(state);
             setPhase("ready");
@@ -1296,7 +1301,8 @@ export function ComputerPanel({
                     : emptyState[phase]}
               </span>
               {currentTeamComputer && <>
-                <p className="text-[12px]">Shared files and signed-in accounts. Auto uses this Orgo, not a private computer.</p>
+                <p className="text-[12px]">Shared files and signed-in accounts. Auto uses this Orgo one Open Orgo Bot turn at a time, not a private computer.</p>
+                {currentTeamComputer.origin === "connected" && <p className="rounded-lg bg-warning/10 px-2 py-1.5 text-[11px] text-warning">Resident VM agents are outside this lease and may compete for the screen.</p>}
                 <button type="button" onClick={() => dispatch({ type: "showTeamMap" })}
                   className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover">Open Team map</button>
                 <button type="button" onClick={() => setRetry(n => n + 1)}
@@ -1555,7 +1561,7 @@ export function ComputerPanel({
           </div>
         )}
 
-        {phase !== "team-orgo" && (bot.computer !== undefined || computerStatusCurrent) && <>
+        {shouldShowLocalControl(phase) && <>
           <LocalScreenPreview />
           <LinuxLocalControl />
           <MacLocalControl />

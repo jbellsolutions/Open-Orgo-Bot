@@ -107,7 +107,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
  * (the pre-existing behavior); the first switch flip writes an explicit
  * list so later additions in Plugins do not silently reach this bot. */
 function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpServers: string[] | null }) => void }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const { servers, error, refresh } = useMcpServers();
   const mounted = new Set((servers ? mcpServersForBot(servers, bot.mcpServers) : []).map((server) => server.name));
   const usesAll = bot.mcpServers == null;
@@ -138,6 +138,19 @@ function McpServersCard({ bot, patch }: { bot: Bot; patch: (patch: { mcpServers:
           {t("botAccess.mcpRefreshError")} <button type="button" onClick={() => void refresh()} className="underline">{t("connectors.action.retry")}</button>
         </div>
       )}
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-accent/25 bg-inset px-3 py-2.5">
+        <div className="min-w-0 flex-1">
+          <div className="text-[12.5px] font-medium text-ink">Super Browser — Built-in</div>
+          <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+            {state.config?.superBrowser?.available
+              ? `Automatic for MCP-capable engines${state.config.superBrowser.version ? ` · v${state.config.superBrowser.version}` : ""}`
+              : state.config?.superBrowser?.reason ?? "Verified bundle unavailable"}
+          </div>
+        </div>
+        <span className={cn("rounded-full px-2 py-0.5 text-[10.5px]", state.config?.superBrowser?.available ? "bg-success/10 text-success" : "bg-raised text-ink-secondary")}>
+          {state.config?.superBrowser?.available ? "Automatic" : "Unavailable"}
+        </span>
+      </div>
       {servers === null ? !error && (
         <div className="mt-3 text-[12px] text-ink-secondary">{t("mcp.loading")}</div>
       ) : servers.length === 0 ? (

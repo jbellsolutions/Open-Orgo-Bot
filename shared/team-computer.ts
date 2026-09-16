@@ -3,6 +3,8 @@
 export interface TeamComputer {
   id: string;
   name: string;
+  orgoComputerId?: string;
+  origin: "created" | "connected";
   section: string | null;
   state: string;
   held: boolean;
