@@ -79,6 +79,13 @@ import { fitsOnOneLine, parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
 import * as orgo from "./orgo.ts";
+import {
+  mergeSuperBrowserMcp,
+  superBrowserMcpServer,
+  superBrowserSummary,
+  SUPER_BROWSER_MCP_NAME,
+  userMcpNames,
+} from "./super-browser.ts";
 import { TeamComputers, teamComputerAssignment, teamComputerCreate, teamComputerOwner, type TeamComputerRecord } from "./team-computers.ts";
 import type { TeamComputersPayload } from "../shared/team-computer.ts";
 import { orgoCreateRecoverySnapshot, retireDeletedOrgoCreate } from "./orgo-create-idempotency.ts";
@@ -151,6 +158,7 @@ import {
   type ModelSelection,
   type RequestOutcome,
   type RuntimeEvent,
+  type SendTurnInput,
   newId,
 } from "./contracts.ts";
 import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
@@ -310,6 +318,7 @@ import {
   PROFILE_PROMPT,
   ROUTINE_PROMPT,
   ROUTINE_EXECUTION_PROMPT,
+  SUPER_BROWSER_SYSTEM_PROMPT,
   WEBHOOK_PROMPT,
   type ComputerPromptKind,
 } from "./system-prompt.ts";
@@ -1205,6 +1214,21 @@ function phoneIntegration() {
   return { command: process.execPath, args: [phoneProxyPath], env };
 }
 
+/** Mount the separately installed, manifest-verified Super Browser router.
+ * Its Orgo adapter receives credentials only as a pinned pair copied from the
+ * computer this turn already owns. With no managed computer it can still
+ * plan/read provider readiness, but it cannot auto-discover or create Orgo. */
+function mountSuperBrowser(integrations: NonNullable<SendTurnInput["integrations"]>): void {
+  const computer = integrations.computer?.kind === "orgo" ? integrations.computer : undefined;
+  const server = superBrowserMcpServer({
+    dataDir: DATA_DIR,
+    path: augmentedPath(),
+    ...(computer ? { orgo: { computerId: computer.computerId, apiKey: computer.apiKey } } : {}),
+  });
+  const merged = mergeSuperBrowserMcp(integrations.custom, server);
+  if (merged) integrations.custom = merged;
+}
+
 function connectedAppsIntegration(botId: string, threadId: string, generation: string) {
   const token = mintInternalCapability({
     botId,
@@ -1632,6 +1656,8 @@ function previewSystemPrompt(bot: BotRecord) {
     destination: previewComputer,
     browserOn: caps?.browserMcp === true && builtInBrowserEnabled(cfg) && bot.browser !== false,
   });
+  const previewCustom = caps?.customMcp ? customMcpServers(cfg, bot.mcpServers) : {};
+  const previewSuperBrowser = caps?.customMcp === true && superBrowserSummary().available;
   const privateWorkspace = instance && supportsWorkspaceFiles(instance.driverKind);
   const built = buildSystemPrompt(persona, bot.soul ?? "", [
     {
@@ -1646,7 +1672,8 @@ function previewSystemPrompt(bot: BotRecord) {
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(teamComputer) },
     { id: "plan", label: "Surface", text: previewPlan.note },
     { id: "composio", label: "Connected apps", text: caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? COMPOSIO_PROMPT : "" },
-    { id: "mcp", label: "MCP servers", text: caps?.customMcp ? customMcpPrompt(Object.keys(customMcpServers(cfg, bot.mcpServers))) : "" },
+    { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(previewCustom)) },
+    { id: "super-browser", label: "Super Browser", text: previewSuperBrowser ? SUPER_BROWSER_SYSTEM_PROMPT : "" },
     { id: "browser", label: "Browser", text: previewPlan.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "" },
     { id: "coordination", label: "Team", text: agentsMounted && coordination ? ` ${coordination}` : "" },
     { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
@@ -5658,6 +5685,7 @@ async function startTurn(
           : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
         throw new Error(`${autoVpsProblem}. ${hint}`);
       }
+      if (instance.adapter.capabilities.customMcp === true) mountSuperBrowser(integrations);
       // Agent control tools include peer comms and the secure credential
       // request card. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
       // stop, so the user's tokens can't be burned by a bot-to-bot loop.
@@ -5791,7 +5819,8 @@ async function startTurn(
         // gated on the integration, not the key: the hint only goes to a
         // bot whose driver actually mounted the tools
         { id: "composio", label: "Connected apps", text: integrations.composio ? COMPOSIO_PROMPT : "" },
-        { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
+        { id: "mcp", label: "MCP servers", text: customMcpPrompt(userMcpNames(integrations.custom)) },
+        { id: "super-browser", label: "Super Browser", text: integrations.custom?.[SUPER_BROWSER_MCP_NAME] ? SUPER_BROWSER_SYSTEM_PROMPT : "" },
         { id: "browser", label: "Browser", text: integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "" },
         { id: "coordination", label: "Team", text: coordinationPrompt ? ` ${coordinationPrompt}` : "" },
         { id: "assignment", label: "Teammate task", text: coordinationNode ? `\n${coordinationSystemInstructions()}` : "" },
@@ -7301,6 +7330,8 @@ async function runGroupMemberTurn(
     );
   }
 
+  if (instance.adapter.capabilities.customMcp === true) mountSuperBrowser(integrations);
+
   const roster = readyGroup.memberIds
     .map((id) => store.bot(id))
     .filter((b): b is NonNullable<typeof b> => Boolean(b))
@@ -7373,7 +7404,8 @@ async function runGroupMemberTurn(
   const roomMemory = memorySystemPrompt(bot.id, { managedWrites: Boolean(integrations.agents), fileTools: worksInWorkspace });
   const roomSystem = buildSystemPrompt(system, store.bot(bot.id)?.soul ?? bot.soul ?? "", [
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd) : "" },
-    { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
+    { id: "mcp", label: "MCP servers", text: customMcpPrompt(userMcpNames(integrations.custom)) },
+    { id: "super-browser", label: "Super Browser", text: integrations.custom?.[SUPER_BROWSER_MCP_NAME] ? SUPER_BROWSER_SYSTEM_PROMPT : "" },
     { id: "computer", label: "Computer", text: computerPrompt(roomTeamComputer ? "orgo" : roomVmTarget ? localVmMode(cfg) === "per-bot" ? "vm-private" : "vm-shared" : null) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer) },
     { id: "plan", label: "Surface", text: roomPlan.note },
@@ -9295,6 +9327,10 @@ function configStatus() {
       // secret itself.
       revision: orgoConnectionRevision,
     },
+    // Discovery reports only version/source/verification state. Paths and
+    // provider credentials stay server-side; a per-turn Orgo pin is added
+    // only after that bot's managed computer has been resolved.
+    superBrowser: superBrowserSummary(),
     vps: { configured: Boolean(vpsSshAlias(cfg)), sshAlias: vpsSshAlias(cfg) ?? "" },
     opencodeGo: { configured: Boolean(cfg.opencodeGo?.apiKey) },
     // the chosen voice is a setting, not a secret; the key is reported the

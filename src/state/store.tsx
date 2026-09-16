@@ -477,6 +477,9 @@ export interface ConfigStatus {
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
   orgo: { configured: boolean; workspaceId?: string; revision?: number };
+  /** Manifest-verified separately installed Super Browser routing bundle.
+   * Filesystem paths and provider credentials are never sent to clients. */
+  superBrowser?: { available: boolean; version?: string; source?: "override" | "bundled" | "codex" | "agents"; verified?: boolean; reason?: string };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
   threads?: { maxConcurrentPerBot: number };
@@ -540,7 +543,7 @@ export interface BrowserProfile {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "orgo" | "vps" | "rooms" | "threads" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "browserEngine" | "browserProfiles" | "edition" | "budgets" | "billing"
+  "xai" | "composio" | "orgo" | "superBrowser" | "vps" | "rooms" | "threads" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "browserEngine" | "browserProfiles" | "edition" | "budgets" | "billing"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -548,6 +551,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     xai: frame.xai,
     composio: frame.composio,
     orgo: frame.orgo,
+    superBrowser: frame.superBrowser,
     vps: frame.vps,
     rooms: frame.rooms,
     threads: frame.threads,

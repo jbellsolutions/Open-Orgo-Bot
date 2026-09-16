@@ -685,6 +685,22 @@ export function SettingsModal() {
                   <OpenAiCompatUrl />
                   <ApiKeyRow section="xai" testProvider="xai" />
                   <div className="pt-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.integrations.title")}</div>
+                  <div className="rounded-lg border border-hairline/40 bg-inset px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[13px] font-medium text-ink">Super Browser</div>
+                      <span className={cn(
+                        "rounded-full px-2 py-0.5 text-[10.5px]",
+                        state.config?.superBrowser?.available ? "bg-success/10 text-success" : "bg-raised text-ink-secondary",
+                      )}>
+                        {state.config?.superBrowser?.available ? "Ready" : "Not installed"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
+                      {state.config?.superBrowser?.available
+                        ? `Verified routing bundle${state.config.superBrowser.version ? ` v${state.config.superBrowser.version}` : ""}. Hermes uses it automatically for advanced browser planning.`
+                        : state.config?.superBrowser?.reason ?? "Install Super Browser to add advanced browser routing."}
+                    </p>
+                  </div>
                   <ApiKeyRow section="orgo" />
                   <OrgoWorkspace />
                   <VpsConnection />

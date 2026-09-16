@@ -115,6 +115,7 @@ describe("parseMcpServersImport", () => {
   it("refuses remote servers, reserved names, and junk", () => {
     expect(parseMcpServersImport('{"mcpServers": {"web": {"url": "https://x.example/mcp"}}}')).toMatchObject({ ok: false, error: expect.stringMatching(/remote|url/i) });
     expect(parseMcpServersImport('{"mcpServers": {"computer": {"command": "x"}}}')).toMatchObject({ ok: false, error: expect.stringMatching(/reserved/i) });
+    expect(parseMcpServersImport('{"mcpServers": {"super_browser": {"command": "x"}}}')).toMatchObject({ ok: false, error: expect.stringMatching(/reserved/i) });
     expect(parseMcpServersImport('{"mcpServers": {"ok": {"command": "x", "env": {"OMB_TOKEN": "1"}}}}')).toMatchObject({ ok: false });
     expect(parseMcpServersImport("not json")).toMatchObject({ ok: false, error: expect.stringMatching(/JSON/i) });
     expect(parseMcpServersImport("[]")).toMatchObject({ ok: false });

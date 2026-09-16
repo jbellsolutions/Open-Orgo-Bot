@@ -201,8 +201,25 @@ export async function verifyApiKey(apiKey: string, selectedWorkspaceId?: string)
 }
 
 export function orgoErrorMessage(status: number, what: string, body?: any): string {
-  const theirs = typeof body?.error === "string" ? body.error : typeof body?.message === "string" ? body.message : "";
-  if (status === 401 || status === 403) return "your Orgo API key was rejected — reconnect Orgo in App Settings";
+  const detail = body?.detail && typeof body.detail === "object" ? body.detail : null;
+  const code = [body?.code, body?.error_code, detail?.code, detail?.error_code]
+    .find((value) => typeof value === "string")?.trim().toUpperCase() ?? "";
+  const theirs = [body?.error, body?.message, typeof body?.detail === "string" ? body.detail : null, detail?.message, detail?.error]
+    .find((value) => typeof value === "string")?.trim() ?? "";
+  if (status === 401) return "your Orgo API key was rejected — reconnect Orgo in App Settings";
+  if (status === 403) {
+    // Orgo uses 403 for both authorization and account capacity. Treating
+    // UPGRADE_REQUIRED as a bad credential sent people through an endless
+    // reconnect loop even though workspace listing with that key succeeded.
+    if (["UPGRADE_REQUIRED", "CHANGE_PLAN", "VM_SLOT_ADDON", "RAM_ADDON", "VCPU_ADDON"].includes(code) ||
+        code.startsWith("PER_COMPUTER_") || /upgrade|plan|capacity|computer limit|slot|quota/i.test(theirs)) {
+      return `Orgo cannot complete ${what} on the account's current plan or capacity — add computer capacity in Orgo, then retry`;
+    }
+    if (code === "WORKSPACE_SCOPE_MISMATCH" || /workspace.+(?:scope|access|permission)/i.test(theirs)) {
+      return `the selected Orgo workspace does not allow ${what} — choose an accessible workspace in App Settings`;
+    }
+    return `Orgo denied ${what} for this account — check the selected workspace and account permissions`;
+  }
   if (status === 404) return `${what} was not found in Orgo`;
   if (status === 429) return "Orgo is rate-limiting this account — wait a moment and retry";
   return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;

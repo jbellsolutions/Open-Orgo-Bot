@@ -76,6 +76,10 @@ export function customMcpPrompt(names: string[]): string {
   const list = names.map((name) => `"${name}"`).join(", ");
   return ` The user also added ${names.length === 1 ? "an MCP server" : "MCP servers"} for you: ${list}. Use their available tools under the engine's normal approval rules.`;
 }
+/** Super Browser chooses a provider and keeps durable run evidence; it does
+ * not replace the app-owned browser/computer surfaces mounted above. */
+export const SUPER_BROWSER_SYSTEM_PROMPT =
+  " Super Browser routing tools are mounted as super_browser. Use plan_browser_task first for nontrivial browser research, anti-bot, proxy, fleet, or provider-selection work. For ordinary deterministic web navigation, execute with the built-in browser tools; for desktop apps, files, or shell work, execute with the mounted computer tools. Super Browser's Orgo lane is available only when it is pinned to this turn's already-managed Orgo computer; never use it to discover or create another computer. External writes, credential-bearing actions, purchases, publishing, messages, and account changes require the user's explicit approval before execution. Verify completed routed work with its run record and evidence.";
 export const CREDENTIAL_PROMPT =
   " If a supported API key is missing, use request_credential to create a secure credential request. A freshly QR-paired mobile app or the desktop app can show the secure entry card. Never claim it opened unless the request succeeded, and never ask the user to paste credentials into chat.";
 export const THREADS_PROMPT =

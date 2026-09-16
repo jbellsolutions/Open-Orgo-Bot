@@ -4,7 +4,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 
@@ -339,6 +339,8 @@ export async function launchVerificationServer(
   extraProviders: Array<"codex"> = [],
   /** Programmatic tests only: an owned loopback Orgo provider, never a live account. */
   orgoFixtureApi?: string,
+  /** Programmatic tests only: an owned temporary Super Browser fixture. */
+  superBrowserFixtureRoot?: string,
 ): Promise<VerificationServer> {
   if (orgoFixtureApi) {
     if (!/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}$/.test(orgoFixtureApi)) {
@@ -346,6 +348,13 @@ export async function launchVerificationServer(
     }
     try { new URL(orgoFixtureApi); }
     catch { throw new ControlOmbError("Orgo verification requires a valid loopback port"); }
+  }
+  if (superBrowserFixtureRoot) {
+    superBrowserFixtureRoot = resolve(superBrowserFixtureRoot);
+    const rel = relative(resolve(tmpdir()), superBrowserFixtureRoot);
+    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+      throw new ControlOmbError("Super Browser verification requires an owned temporary bundle");
+    }
   }
   if (localVm) {
     const endpoint = new URL(localVm.host);
@@ -433,6 +442,7 @@ export async function launchVerificationServer(
     AGENT_BROWSER_EXECUTABLE_PATH: browser.executablePath,
   });
   if (orgoFixtureApi) childEnv.OOB_ORGO_API = orgoFixtureApi;
+  if (superBrowserFixtureRoot) childEnv.OOB_SUPER_BROWSER_ROOT = superBrowserFixtureRoot;
   const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: childEnv,

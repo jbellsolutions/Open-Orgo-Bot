@@ -19,6 +19,7 @@ import {
   ROUTINE_EXECUTION_PROMPT,
   WEBHOOK_PROMPT,
   SIGN_IN_PROMPT,
+  SUPER_BROWSER_SYSTEM_PROMPT,
 } from "./system-prompt.ts";
 
 describe("buildSystemPrompt", () => {
@@ -123,10 +124,17 @@ describe("computerPrompt", () => {
 
 describe("shared sentences", () => {
   it("each begins with one space so they concatenate onto the persona line", () => {
-    for (const sentence of [COMPOSIO_PROMPT, CREDENTIAL_PROMPT, ROUTINE_PROMPT, ROUTINE_EXECUTION_PROMPT, LEARN_PROMPT, WEBHOOK_PROMPT, PROFILE_PROMPT, SIGN_IN_PROMPT]) {
+    for (const sentence of [COMPOSIO_PROMPT, CREDENTIAL_PROMPT, ROUTINE_PROMPT, ROUTINE_EXECUTION_PROMPT, LEARN_PROMPT, WEBHOOK_PROMPT, PROFILE_PROMPT, SIGN_IN_PROMPT, SUPER_BROWSER_SYSTEM_PROMPT]) {
       expect(sentence.startsWith(" ")).toBe(true);
       expect(sentence.startsWith("  ")).toBe(false);
     }
+  });
+
+  it("keeps Super Browser as a routed planner without unpinned Orgo creation", () => {
+    expect(SUPER_BROWSER_SYSTEM_PROMPT).toContain("plan_browser_task");
+    expect(SUPER_BROWSER_SYSTEM_PROMPT).toContain("built-in browser tools");
+    expect(SUPER_BROWSER_SYSTEM_PROMPT).toContain("never use it to discover or create another computer");
+    expect(SUPER_BROWSER_SYSTEM_PROMPT).toContain("explicit approval");
   });
 
   it("customMcpPrompt names the mounted servers and is empty for none", () => {

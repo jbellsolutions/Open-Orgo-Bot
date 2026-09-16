@@ -50,6 +50,7 @@ const RESERVED_MCP_NAMES = new Set([
   "browser",
   "phone",
   "dweb",
+  "super_browser",
   "openmausbot_connectors",
   "openmausbot_phone",
 ]);

@@ -108,3 +108,17 @@ describe("Orgo provider adapter", () => {
     await expect(provider.inspectOrgoIdentity(cfg, COMPUTER_ID)).resolves.toMatchObject({ available: true, identity: null });
   });
 });
+
+describe("Orgo provider errors", () => {
+  it("distinguishes a rejected credential from plan and capacity failures", async () => {
+    const { orgoErrorMessage } = await import("./orgo.ts");
+    expect(orgoErrorMessage(401, "computer creation", { message: "Unauthorized" })).toContain("API key was rejected");
+    expect(orgoErrorMessage(403, "computer creation", { code: "UPGRADE_REQUIRED", message: "Upgrade your plan" }))
+      .toContain("current plan or capacity");
+    expect(orgoErrorMessage(403, "computer creation", { detail: { code: "VM_SLOT_ADDON", message: "No slots" } }))
+      .toContain("current plan or capacity");
+    expect(orgoErrorMessage(403, "computer creation", { code: "WORKSPACE_SCOPE_MISMATCH" }))
+      .toContain("selected Orgo workspace");
+    expect(orgoErrorMessage(403, "computer creation", { message: "Forbidden" })).toContain("account permissions");
+  });
+});
