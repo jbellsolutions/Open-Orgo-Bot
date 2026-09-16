@@ -171,7 +171,7 @@ export function shouldPollCloudPreview(
   const current = resolvedBotId === botId && resolvedCloudBackend === cloudBackend;
   return current && (
     (computer === "cloud" && phase === "ready" && resolvedComputer === "cloud") ||
-    (computer === undefined && phase === "team-orgo" && teamComputer)
+    (phase === "team-orgo" && teamComputer)
   );
 }
 

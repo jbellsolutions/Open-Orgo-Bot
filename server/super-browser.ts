@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { augmentedPath } from "./env-path.ts";
 import { PROVIDER_CREDENTIAL_ENV, stripWorkspaceCredentialEnv } from "./config.ts";
+import type { McpServerSpec } from "./contracts.ts";
 import { callMcpTool } from "./mcp-probe.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
 
@@ -225,9 +226,9 @@ export function superBrowserMcpServer(options: {
 }
 
 export function mergeSuperBrowserMcp(
-  custom: Record<string, SuperBrowserMcpServer> | undefined,
+  custom: Record<string, McpServerSpec> | undefined,
   server: SuperBrowserMcpServer | null,
-): Record<string, SuperBrowserMcpServer> | undefined {
+): Record<string, McpServerSpec> | undefined {
   if (!server) return custom;
   return { ...custom, [SUPER_BROWSER_MCP_NAME]: server };
 }

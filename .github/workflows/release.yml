@@ -238,7 +238,9 @@ jobs:
           v=$(node -p "require('./package.json').version")
           cp "release/Open-Orgo-Bot-$v-arm64.dmg" release/Open-Orgo-Bot.dmg
           cp "release/Open-Orgo-Bot-$v-x64.dmg" release/Open-Orgo-Bot-intel.dmg
-          (cd release && shasum -a 256 Open-Orgo-Bot.dmg Open-Orgo-Bot-intel.dmg > SHA256SUMS-macos.txt)
+          chmod +x "Open Orgo Bot Installer.command"
+          zip -j release/Open-Orgo-Bot-Installer.zip "Open Orgo Bot Installer.command" install.sh
+          (cd release && shasum -a 256 Open-Orgo-Bot.dmg Open-Orgo-Bot-intel.dmg Open-Orgo-Bot-Installer.zip > SHA256SUMS-macos.txt)
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -448,7 +450,7 @@ jobs:
             "Open-Orgo-Bot-$VERSION-x64.zip"
             "Open-Orgo-Bot-$VERSION-x64.zip.blockmap"
             "Open-Orgo-Bot-$VERSION-x86_64.AppImage"
-            Open-Orgo-Bot-amd64.deb Open-Orgo-Bot-intel.dmg Open-Orgo-Bot-setup.exe
+            Open-Orgo-Bot-amd64.deb Open-Orgo-Bot-Installer.zip Open-Orgo-Bot-intel.dmg Open-Orgo-Bot-setup.exe
             Open-Orgo-Bot.AppImage Open-Orgo-Bot.dmg SHA256SUMS-macos.txt SHA256SUMS-ubuntu-x64.txt
           )
           for file in "${required[@]}"; do

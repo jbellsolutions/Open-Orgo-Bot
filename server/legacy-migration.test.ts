@@ -1,4 +1,4 @@
-// A user upgrading from OpenMausBot's data dir (~/.openmausbot) must find
+// A user upgrading from Open Orgo Bot's data dir (~/.openmausbot) must find
 // everything in ~/.openorgobot after the first boot. Anything that touches
 // the new dir before ensureDirs() runs would make that rename a no-op and
 // boot the user into an empty workspace — this test pins the order.

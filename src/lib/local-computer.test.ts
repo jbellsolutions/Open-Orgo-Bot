@@ -275,6 +275,7 @@ describe("local computer UI eligibility", () => {
       teamComputer: true,
     };
     expect(shouldPollCloudPreview(shared)).toBe(true);
+    expect(shouldPollCloudPreview({ ...shared, computer: "cloud", resolvedComputer: "cloud" })).toBe(true);
     expect(shouldPollCloudPreview({ ...shared, teamComputer: false })).toBe(false);
     expect(shouldPollCloudPreview({ ...shared, resolvedBotId: "bot-b" })).toBe(false);
   });

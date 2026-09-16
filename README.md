@@ -6,7 +6,7 @@
 
 ### A local-first AI team for your Mac, powered by Hermes and Orgo computers
 
-[![Upstream](https://img.shields.io/badge/upstream-OpenMausBot%20v0.1.80-5f6cff)](https://github.com/milind-soni/OpenMausBot/releases/tag/v0.1.80)
+[![Upstream](https://img.shields.io/badge/upstream-OpenMausBot%20v0.1.82-5f6cff)](https://github.com/milind-soni/OpenMausBot/releases/tag/v0.1.82)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2ea44f)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-Apple%20silicon%20%7C%20Intel-black?logo=apple)](#install-on-macos)
 [![Default agent](https://img.shields.io/badge/default%20agent-Hermes-7c3aed)](https://github.com/NousResearch/hermes-agent)
@@ -51,6 +51,10 @@ The installer:
 - preserves the existing app if installation fails;
 - installs into `/Applications` or your personal Applications folder; and
 - launches Open Orgo Bot when finished.
+
+### Easiest teammate install
+
+Download **Open-Orgo-Bot-Installer.zip** from the [latest release](https://github.com/jbellsolutions/Open-Orgo-Bot/releases/latest), unzip both files into the same folder, and double-click **Open Orgo Bot Installer.command**. It runs the bundled verified installer and leaves the previous app in place if anything fails.
 
 ### Manual install
 
@@ -101,7 +105,7 @@ computer.
 | Browser routing | A fixed, verified **Super Browser — Built-in** MCP bridge is mounted automatically; setup, Chromium install, and pinned-route tests live in Connections while the existing Browser tab stays unchanged |
 | Identity | Independent name, artwork, bundle ID, URL scheme, storage directory, and release channel |
 | Licensing | Apache-2.0 open-source edition only; upstream `enterprise/` is excluded |
-| Upstream base | OpenMausBot `v0.1.80` (`58b138ff329f78d896286983824c912f50b94faf`) |
+| Upstream base | OpenMausBot `main` at `b94f4a618c4565a5d17275cb5d3d5a52a7e009c0` (includes stable `v0.1.82`) |
 
 ## Highlights
 

@@ -3,6 +3,7 @@
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import { rm as removeDirectory } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join } from "node:path";
 
@@ -31,7 +32,7 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 
-import { approvalHeldNote, approvalHeldReason, approvalModeForOrigin, autoVerdict, deliverFullAccessApproval } from "./auto-approve.ts";
+import { approvalHeldNote, approvalHeldReason, approvalModeForOrigin, autoVerdict, deliverFullAccessApproval, delegationInheritsFullAccess } from "./auto-approve.ts";
 import { updateClaudeCli } from "./claude-update.ts";
 import { configuredAccountDirectory, assertSeparateClaudeAccount, claudeAccountInfo, createClaudeAccountSchema, instanceSettingsSchema, newClaudeAccount } from "./claude-accounts.ts";
 import {
@@ -133,9 +134,11 @@ import {
   localVmMode,
   parseConfigPatch,
   roomTurnTimeoutMinutes,
-  maxConcurrentBotThreads,
+maxConcurrentBotThreads,
+  threadEventLogMaxBytes,
   saveConfig,
   showToolCallsEnabled,
+  claudeUserMcpEnabled,
   skillAuthoringEnabled,
   sharedComputersEnabled,
   builtInBrowserEnabled,
@@ -166,6 +169,7 @@ import { describeSpawnFailure, execCli } from "./procs.ts";
 import { blockedTarget, buildNotification, type Notification } from "./notify.ts";
 import {
   isEffortLevel,
+  isModelVariant,
   type ModelSelection,
   type RequestOutcome,
   type RuntimeEvent,
@@ -198,8 +202,9 @@ import type { GroupGoalRunCardData, GroupGoalRunStatus } from "../shared/group-g
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { readMessageText, recallMessages, searchMessages, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups } from "./message-db.ts";
-import { claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
+import { readMessageText, recallMessages, recentMessages, searchMessages, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups } from "./message-db.ts";
+import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
+import { parseSince, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 
 /** A session_read answer competes with the transcript for the context
  * window; a computer-use turn's output can run to hundreds of KB. */
@@ -378,8 +383,9 @@ import { BOT_PACKAGE_MAX_SKILLS, isBotPackage, packageAgentAsMember, parseBotPac
 import { createTeamManifest, importedMemberProfile, parseTeamManifest } from "./team-manifest.ts";
 import { takeImportName } from "../shared/import-name.ts";
 import { readThreadEvents } from "./thread-events.ts";
+import { bindThreadLogCapProvider } from "./thread-log-rotation.ts";
 import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
-import { memberTurnSelection } from "./member-turn.ts";
+import { assertModelVariantSupported, memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
@@ -388,8 +394,9 @@ import { createBotPackageExport, type ExportablePackageSkill } from "./package-e
 import { createTeamBackup, importTeamBackup } from "./team-backup.ts";
 import { MAX_TEAM_BACKUP_BYTES } from "../shared/team-backup.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
+import { autoLocalVmAttachable, type ContainerComputerStatus } from "./container-computer.ts";
 import { modelContextWindow } from "./model-context-window.ts";
-import { resolveSurface } from "./surface.ts";
+import { parseSurface, resolveSurface, surfaceLabel, surfaceOfComputerKind, surfacePrompt, type Surface } from "./surface.ts";
 import {
   PendingTurnCancellations,
   ProviderTurnGenerationRegistry,
@@ -508,6 +515,10 @@ let companionMutationToken: string | undefined = DESKTOP_MANAGED ? "" : undefine
 // Where remote clients reach this server (a proxy's public address); pairing URLs use it.
 const FALLBACK_PUBLIC_URL = process.env.OMB_PUBLIC_URL?.trim().replace(/\/+$/, "") || null;
 const cfg = loadConfig();
+// The per-thread event log cap is checked after every NDJSON append.
+// config.json is read once per process (a change restarts the server, like
+// every other hand-edited knob), so a binding made here never goes stale.
+bindThreadLogCapProvider(() => threadEventLogMaxBytes(cfg));
 const customDomainVerifier = createCustomDomainVerifier({ environmentId: ENVIRONMENT_ID });
 // "Sign in with your email" on /pair: the allow-list is read per call so a
 // Settings change or an env bootstrap applies without a restart.
@@ -723,6 +734,15 @@ const INTERNAL_CAPABILITY_ORPHAN_MS = 30 * 24 * 60 * 60_000;
 const internalCapabilities = new Map<string, InternalCapability>();
 const activeInternalGenerationByThread = new Map<string, string>();
 const internalGenerationByProviderTurn = new ProviderTurnGenerationRegistry();
+const computerSelectionTurns = new Map<string, {
+  generation: string;
+  botId: string;
+  source: Message;
+  text: string;
+  mounted?: Surface;
+  selected?: Surface;
+  previousSurface?: Surface;
+}>();
 
 function beginInternalCapabilityGeneration(threadId: string, generation = randomUUID()): string {
   const previous = activeInternalGenerationByThread.get(threadId);
@@ -756,6 +776,7 @@ function revokeInternalCapabilityGeneration(threadId: string, generation: string
 }
 
 function revokeInternalCapabilitiesForThread(threadId: string): void {
+  computerSelectionTurns.delete(threadId);
   const generation = activeInternalGenerationByThread.get(threadId);
   if (generation) revokeInternalCapabilityGeneration(threadId, generation);
   // Defensive cleanup for any generation orphaned before exact ownership was
@@ -767,6 +788,7 @@ function revokeInternalCapabilitiesForThread(threadId: string): void {
 }
 
 function revokeAllInternalCapabilities(): void {
+  computerSelectionTurns.clear();
   internalCapabilities.clear();
   activeInternalGenerationByThread.clear();
   internalGenerationByProviderTurn.clear();
@@ -802,6 +824,9 @@ function authorizedInternalCapability(header: string | string[] | undefined): In
 }
 
 function internalCapabilityIsActive(capability: InternalCapability): boolean {
+  const switching = computerSelectionTurns.get(capability.threadId);
+  if ((capability.kind === "computer" || capability.kind === "browser") &&
+      switching?.generation === capability.generation && switching.selected) return false;
   if (capability.teamComputerId) {
     const pinned = teamComputerTurns.get(capability.threadId);
     if (pinned?.computerId !== capability.teamComputerId || pinned.owner.generation !== capability.generation ||
@@ -952,9 +977,12 @@ function releaseTurnResources(owner: TurnOwner | undefined): void {
   }
 }
 
-function bindTurnComputer(owner: TurnOwner, resource: string, exclusive = false): void {
+async function bindTurnComputer(owner: TurnOwner, resource: string, exclusive = false): Promise<void> {
   if (exclusive && !claimTurnResource(owner, resource)) {
-    throw Object.assign(new Error("another thread is using this computer — wait for it to finish"), { status: 409, code: "computer_busy" });
+    throw Object.assign(new Error("another thread is using this computer — wait for it to finish"), {
+      status: 409,
+      code: "computer_busy",
+    });
   }
   turnResourceOwners.set(owner.threadId, owner);
   turnComputerResources.set(owner.threadId, { owner, resource });
@@ -1391,7 +1419,7 @@ function checkedModelSelection(
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, status: 400, error: "modelSelection must be an object" };
   }
-  const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown };
+  const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown; variant?: unknown };
   if (typeof value.instanceId !== "string" || !value.instanceId.trim()) {
     return { ok: false, status: 400, error: "modelSelection.instanceId is required" };
   }
@@ -1408,10 +1436,20 @@ function checkedModelSelection(
     }
     selection.effort = value.effort;
   }
+  if (value.variant !== undefined) {
+    if (!isModelVariant(value.variant)) {
+      return { ok: false, status: 400, error: "variant must be a non-empty model variant ID" };
+    }
+    if (value.effort !== undefined) {
+      return { ok: false, status: 400, error: "choose either a model variant or an effort level" };
+    }
+    selection.variant = value.variant;
+  }
   const changed = current && (
     selection.instanceId !== current.selection.instanceId ||
     selection.model !== current.selection.model ||
-    selection.effort !== current.selection.effort
+    selection.effort !== current.selection.effort ||
+    selection.variant !== current.selection.variant
   );
   if (current?.busy && changed) {
     return { ok: false, status: 409, error: "the bot is working — stop it before changing models" };
@@ -1442,6 +1480,9 @@ function checkedModelSelection(
   const allowed: readonly string[] = target?.adapter.capabilities.effortLevels ?? [];
   if (target && selection.effort !== undefined && !allowed.includes(selection.effort)) {
     return { ok: false, status: 400, error: `effort "${selection.effort}" is not offered by this bot's engine` };
+  }
+  if (target && selection.variant !== undefined && !target.adapter.capabilities.modelVariants) {
+    return { ok: false, status: 400, error: "model variants are not offered by this bot's engine" };
   }
   return { ok: true, selection };
 }
@@ -1637,7 +1678,7 @@ function previewSystemPrompt(bot: BotRecord) {
   ]
     .filter(Boolean)
     .join(" ");
-  const instance = registry.get(bot.modelSelection.instanceId);
+  const instance = turnInstance(bot);
   const caps = instance?.adapter.capabilities;
   const teamComputer = inheritedTeamComputer(bot);
   const previewComputer = teamComputer ? "cloud" : bot.computer;
@@ -1681,7 +1722,12 @@ function previewSystemPrompt(bot: BotRecord) {
     },
     { id: "computer", label: "Computer", text: computerPrompt(computerPromptKind) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(teamComputer) },
-    { id: "plan", label: "Surface", text: previewPlan.note },
+    // Auto cannot know its place until dispatch, so the preview stays silent
+    // there and only carries the note; explicit settings preview the paragraph.
+    { id: "plan", label: "Surface", text: previewPlan.computer === undefined ? "" : surfacePrompt({
+      computer: previewPlan.computer && previewPlan.computer !== "off" && computerPromptKind ? previewPlan.computer : null,
+      browser: previewPlan.computer === undefined ? false : previewPlan.browser,
+    }, { note: previewPlan.note }) },
     { id: "composio", label: "Connected apps", text: caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? COMPOSIO_PROMPT : "" },
     { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(previewCustom)) },
     { id: "super-browser", label: "Super Browser", text: previewSuperBrowser ? SUPER_BROWSER_SYSTEM_PROMPT : "" },
@@ -1780,7 +1826,10 @@ async function botOverview(bot: BotRecord): Promise<BotOverview> {
  * approval semantics require an implemented provider mapping. The trusted transition enforces
  * this too, but no provider dispatch or later permission callback relies on
  * persistence having been produced exclusively by that route. Delegation
- * uses the receiving bot's grant, never the sender's — see approvalModeForOrigin. */
+ * uses the receiving bot's grant, never the sender's (approvalModeForOrigin) —
+ * with one deliberate exception: a Chief of Staff with Full access makes the
+ * threads it delegates Full too (delegatedFullAccess), so the grant the
+ * person gave the Chief covers the work the Chief hands out. */
 const approvalModeForTurn = (bot: BotRecord, peerInitiated = false): ApprovalMode => {
   const mode = approvalModeForOrigin(approvalModeFor(bot), { peerInitiated });
   if (!supportsApprovalMode(registry.cliTarget(bot.modelSelection.instanceId)?.driverKind, mode)) {
@@ -1801,6 +1850,49 @@ function fullAccessForSource(botId: string, threadId: string): boolean {
 
 function peerReviewRequired(bot: BotRecord, threadId: string): boolean {
   return Boolean(bot.approvePeerComms && !fullAccessForSource(bot.id, threadId));
+}
+
+/** Full access flows down a Chief of Staff's delegation. The person gave the
+ * Chief Full access so its work runs without prompts; a teammate stopping
+ * that same work to ask defeats the grant — and in practice the person was
+ * answering every one of those cards, all day, for the whole team. So a
+ * teammate a Full-access Chief delegates to runs Full for that work: the
+ * recipient switches, whatever its own level says. The recipient's engine
+ * has to implement Full (supportsApprovalMode); otherwise the work keeps the
+ * recipient's own level, as before. Only a Chief passes access on — an
+ * ordinary bot's delegation still uses the recipient's setting. */
+function delegatedFullAccess(from: BotRecord, fromThreadId: string, target: BotRecord): boolean {
+  return delegationInheritsFullAccess({
+    senderIsChief: Boolean(from.chiefOfStaff),
+    senderHasFullAccess: fullAccessForSource(from.id, fromThreadId),
+    sameBot: from.id === target.id,
+    recipientDriverKind: registry.cliTarget(target.modelSelection.instanceId)?.driverKind,
+  });
+}
+
+/** Make a delegated thread Full and say so in it once, so the level the
+ * chip shows and the level the turns run at agree, and the person can see
+ * where the access came from. Idempotent: a pair conversation is reused
+ * across delegations and must not collect a chip per request. */
+function grantDelegatedFullAccess(from: BotRecord, target: BotRecord, threadId: string): void {
+  if (store.taskByThread(target.id, threadId)?.approvalMode === "full") return;
+  store.patchTask(target.id, threadId, { approvalMode: "full", autoApprove: false, alwaysAllow: [] });
+  store.appendMessage(threadId, {
+    role: "bot",
+    kind: "activity",
+    tool: { name: `Full access — delegated by ${from.name}, a Chief of Staff with Full access`, ok: true },
+  });
+}
+
+/** A room member's level for one turn. Work a Full-access Chief hands out
+ * in a room runs Full for that turn: the room thread is shared, so the
+ * level is not stored on it — it rides the handoff. */
+function roomTurnApprovalMode(bot: BotRecord, orchestration?: GroupTurnOrchestration): ApprovalMode {
+  const handoff = orchestration?.roomHandoffId ? roomHandoffs.nodes.get(orchestration.roomHandoffId) : undefined;
+  const source = handoff?.parentId ? roomHandoffs.nodes.get(handoff.parentId) : undefined;
+  const from = source ? store.bot(source.botId) : undefined;
+  if (from && source && delegatedFullAccess(from, source.threadId, bot)) return "full";
+  return approvalModeForTurn(bot, Boolean(orchestration?.roomHandoffId));
 }
 
 /** Privileged approval-mode transitions are deliberately absent from the
@@ -2490,7 +2582,16 @@ function outstandingAssignmentsPrompt(threadId: string): string {
 const roomHandoffs = new RoomHandoffs(join(DATA_DIR, "room-handoffs.json"), {
   validate: (node, parent) => roomHandoffProblem(node, parent) ??
     (parent && store.bot(parent.botId)?.approvePeerComms && !fullAccessForSource(parent.botId, parent.threadId) && !node.approvalGranted ? "Sender now requires peer approval; submit a new approved request" : undefined),
-  busy: n => Boolean(store.bot(n.botId)?.busy || (n.groupId && store.group(n.groupId) && groupIsWorking(store.group(n.groupId)!))),
+  // A direct follow-up is owed to one conversation, so it waits for that
+  // conversation, not for the whole bot. Bot-level busy aggregates every
+  // thread — including cards still waiting on the person — so one busy
+  // sibling thread would otherwise starve the owed resume forever while the
+  // UI keeps showing this thread working. Fresh work still queues behind a
+  // busy teammate's whole bot (#1238); an owed resume only needs its own
+  // thread free and a thread slot to admit it.
+  busy: n => !n.groupId && n.status === "resume"
+    ? threadBusy(n.botId, n.threadId) || botAtThreadCapacity(n.botId)
+    : Boolean(store.bot(n.botId)?.busy || (n.groupId && store.group(n.groupId) && groupIsWorking(store.group(n.groupId)!))),
   changed: (groupIds, directThreadIds) => {
     for (const id of groupIds) {
       const group = store.group(id);
@@ -3379,10 +3480,12 @@ const watchdog = new TurnWatchdog({
         groupSpeakers.delete(turn.threadId);
         store.patchGroup(group.id, { busyBotId: null, unread: true });
       }
+      // A cleared UI busy flag must not strand this finished generation's
+      // computer claim. The generation checks above protect replacements.
+      releaseTurnResources(stalledResourceOwner);
       const currentBot = store.bot(turn.botId);
       if (currentBot?.busy) {
         stopScreenPoller(currentBot.id, turn.threadId);
-        releaseTurnResources(stalledResourceOwner);
         if (activeVpsThreads.get(currentBot.id) === turn.threadId) activeVpsThreads.delete(currentBot.id);
         if (store.taskByThread(currentBot.id, turn.threadId)) store.setTaskActivity(currentBot.id, turn.threadId, "idle");
         else store.setActivity(currentBot.id, "idle");
@@ -3434,6 +3537,37 @@ bus.subscribe((event: RuntimeEvent) => {
   if (event.type === "turn.completed" || event.type === "session.exited") {
     runningTurnEngines.delete(event.threadId);
     endMemoryTurn(event.threadId);
+  }
+});
+
+// One line per finished turn in the bot's daily log (server/recent-work.ts):
+// what it said last, the tools it used, whether the turn failed. What a bot
+// did in one conversation was invisible from every other; the log is where
+// session_search finds it later, and it is never loaded whole into a
+// prompt. In a room the reply names its speaker; a room turn that never
+// replied has no one to credit and leaves no line.
+bus.subscribe((event: RuntimeEvent) => {
+  if (shouldIgnoreProviderEvent(event)) return;
+  if (event.type !== "turn.completed" || !event.turnId) return;
+  try {
+    const messages = store.messagesFor(event.threadId);
+    const reply = messages.findLast((message) => message.role === "bot" && message.kind === "text" && message.turnId === event.turnId);
+    const bot = store.botByThread(event.threadId) ?? (reply?.from ? store.bot(reply.from.botId) : undefined);
+    if (!bot) return;
+    const tools = messages
+      .filter((message) => message.kind === "activity" && message.turnId === event.turnId && message.tool?.name)
+      .map((message) => message.tool!.name);
+    const line = turnOutcomeLine({ ok: event.ok, reply: reply?.text, stopReason: event.stopReason, tools });
+    if (!line) return;
+    appendMemoryLog(bot.id, line, {
+      source: memorySourceLabel({
+        room: store.groupByThread(event.threadId),
+        task: store.taskByThread(bot.id, event.threadId),
+        threadId: event.threadId,
+      }),
+    });
+  } catch {
+    // a missing note never fails a turn
   }
 });
 
@@ -3516,6 +3650,14 @@ const localVmLeases = new LocalVmLeasePool(30 * 60_000);
 const localVmLifecycleBusy = new Set<string>();
 const localVmThreadTargets = new Map<string, LocalVmTarget>();
 const localVmActiveThreads = new Map<string, string>();
+/** Local VM targets this process has seen ready or recreatable — at boot, in
+ * the inventory, or in a turn. Auto probes the container runtime for a VM
+ * only when one of these exists, so an ordinary Auto turn on a machine with
+ * no VM never pays for a docker or podman call. */
+const localVmSeen = new Set<string>();
+function noteLocalVmSeen(target: LocalVmTarget, status: ContainerComputerStatus | null | undefined): void {
+  if (status && autoLocalVmAttachable(status)) localVmSeen.add(target.key);
+}
 let localVmImageBusy = false;
 let localVmProvisionBusy = false;
 let localVmModeChangeBusy = false;
@@ -3617,12 +3759,12 @@ async function attachTeamOrgo(computer: TeamComputerRecord, botId: string, owner
   const ownerId = teamComputerOwner(computer.id);
   if (orgoLifecycleBusyBots.has(ownerId)) throw new Error("The team computer is being changed; wait for it to finish");
   if (computerControl.snapshot(ownerId).held) throw new Error("Release human control of the team computer before starting another turn");
-  bindTurnComputer(owner, `computer:orgo-bot:${ownerId}`, true);
+  await bindTurnComputer(owner, `computer:orgo-bot:${ownerId}`, true);
   teamComputerTurns.set(owner.threadId, { owner, computerId: computer.id, botId, remoteAgent });
   let machine = await orgo.findOrgo(cfg, ownerId, computer.orgoComputerId);
   if (!machine) throw new Error("The team's Orgo computer is missing; explicitly create or retry it from the Team map");
   if (!computer.orgoComputerId) teamComputers.pinOrgoComputer(computer.id, machine.id);
-  bindTurnComputer(owner, `computer:orgo:${machine.id}`, true);
+  await bindTurnComputer(owner, `computer:orgo:${machine.id}`, true);
   const action = orgo.orgoTurnLifecycleAction({ explicitCloud: true, canMount: true, state: typeof machine.state === "string" ? machine.state : null });
   if (action === "wake") machine = await orgo.readyOrgo(cfg, ownerId, 60_000, computer.orgoComputerId ?? machine.id);
   if (!machine || orgo.orgoTurnLifecycleAction({ explicitCloud: true, canMount: true, state: typeof machine.state === "string" ? machine.state : null }) !== "attach") {
@@ -3738,31 +3880,148 @@ function providerOperationConflict(provider: RemoteComputerProvider): string | n
   return null;
 }
 
-function turnProvider(bot: NonNullable<ReturnType<typeof store.bot>>, runOn?: RoutineRunOn): RemoteComputerProvider | null {
-  if (runOn === "cloud" || false) return "orgo";
-  if (inheritedTeamComputer(bot)) return "orgo";
-  if (bot.computer !== undefined && bot.computer !== "cloud") return null;
-  return bot.cloudBackend === "vps" ? "vps" : "orgo";
+function turnSurfacePlan(bot: BotRecord, runOn?: RoutineRunOn, threadId?: string) {
+  const instance = registry.get(bot.modelSelection.instanceId);
+  const forcedOrgo = runOn === "cloud" || Boolean(inheritedTeamComputer(bot));
+  return resolveSurface({
+    destination: forcedOrgo ? "cloud" : bot.computer,
+    pinnedSurface: forcedOrgo || !threadId ? null : store.taskByThread(bot.id, threadId)?.surface,
+    browserOn: builtInBrowserEnabled(cfg) && bot.browser !== false && instance?.adapter.capabilities.browserMcp === true,
+  });
+}
+
+function turnProvider(bot: BotRecord, runOn?: RoutineRunOn, threadId?: string): RemoteComputerProvider | null {
+  if (runOn === "cloud" || inheritedTeamComputer(bot)) return "orgo";
+  const wants = turnSurfacePlan(bot, runOn, threadId).computer;
+  if (wants !== undefined && wants !== "cloud") return null;
+  return bot.cloudBackend === "vps" ? "vps" : wants === "cloud" ? "orgo" : null;
 }
 
 /** The selected local engine owns cloud turns too; Orgo is mounted through
  * the same isolated computer integration as the other computer surfaces. */
-function turnInstance(bot: NonNullable<ReturnType<typeof store.bot>>, _runOn?: RoutineRunOn): ReturnType<typeof registry.get> {
+function turnInstance(bot: BotRecord, _runOn?: RoutineRunOn, _threadId?: string): ReturnType<typeof registry.get> {
   return registry.get(bot.modelSelection.instanceId);
+}
+
+/** Preview requests carry the selected conversation, not whichever thread
+ * happens to be the bot's default. A query never grants lifecycle authority. */
+function computerPreviewBot(botId: string, url: URL): BotRecord | null {
+  const threadId = url.searchParams.get("threadId");
+  if (!threadId) return store.bot(botId);
+  const bot = store.projectBotForTask(botId, threadId);
+  if (!bot) throw Object.assign(new Error("no such task"), { status: 404 });
+  return directTurnBots.get(threadId) ?? bot;
+}
+
+async function computerPreviewSurface(bot: BotRecord, threadId?: string) {
+  const plan = turnSurfacePlan(bot, undefined, threadId);
+  if (plan.computer !== undefined) return plan.computer === "off" && plan.browser ? "browser" : plan.computer;
+  const instance = registry.get(bot.modelSelection.instanceId);
+  if (bot.cloudBackend === "orgo" && orgo.orgoConfigured(cfg)) {
+    const status = await orgo.orgoStatus(cfg, bot.id, bot.orgoComputerId).catch(() => null);
+    if (status?.computer) return "cloud";
+  }
+  if (bot.cloudBackend === "vps") {
+    const remote = await vps.vpsComputerStatus(cfg, bot.id);
+    if (remote.ready) return "cloud";
+  }
+  const target = localVmTargetForBot(bot.id);
+  if (instance?.adapter.capabilities.computerMcp && localVmSeen.has(target.key)) {
+    const vm = await containerComputerStatus(undefined, undefined, target).catch(() => null);
+    if (vm && autoLocalVmAttachable(vm)) return "vm";
+  }
+  if (shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform,
+    providerSupportsLocal: instance?.adapter.capabilities.localComputerMcp === true }) && readCuaConnection()) return "local";
+  if (bot.cloudBackend === "vps") return "cloud"; // show its unavailable reason
+  return plan.browser ? "browser" : "off";
+}
+
+/** Discovery is read-only. Starting or creating a configured computer is
+ * deferred until a chat tool selects it and the old turn releases its tools. */
+async function selectableComputers(bot: BotRecord) {
+  const caps = registry.get(bot.modelSelection.instanceId)?.adapter.capabilities;
+  const off = bot.computer === "off";
+  const localEngine = true;
+  return Promise.all((["cloud", "vm", "local", "browser"] as const).map(async surface => {
+    let ready = false;
+    let canStart = false;
+    let canCreate = false;
+    let reason = "This computer is not configured or running. Open the Computer panel to set it up.";
+    try {
+      if (off) reason = "Computer access is Off in this bot's settings.";
+      else if (surface === "cloud") {
+        if (bot.cloudBackend === "vps") {
+          const status = localEngine && caps?.computerMcp ? await vps.vpsComputerStatus(cfg, bot.id) : null;
+          ready = status?.ready === true;
+          canStart = Boolean(status?.daemonUp && status.managed && status.container === "stopped" &&
+            status.image && status.imageMatches && status.network === "private" && status.mounts === "none" && status.security === "hardened");
+          canCreate = Boolean(status?.configured && status.daemonUp && status.container === "missing");
+          reason = status?.problem ?? reason;
+        } else if (orgo.orgoConfigured(cfg) && caps?.computerMcp) {
+          const status = await orgo.orgoStatus(cfg, bot.id, bot.orgoComputerId);
+          const lifecycle = orgo.orgoTurnLifecycleAction({ explicitCloud: true, canMount: true, state: status.computer?.state ?? null });
+          ready = lifecycle === "attach";
+          canStart = lifecycle === "wake";
+          canCreate = lifecycle === "provision";
+          reason = status.computer ? reason : "No assigned Orgo computer is available.";
+        }
+      } else if (surface === "vm" && localEngine && caps?.computerMcp) {
+        const target = localVmTargetForBot(bot.id);
+        const status = await containerComputerStatus(undefined, undefined, target);
+        ready = status.ready;
+        canCreate = !ready && autoLocalVmAttachable(status);
+        if (ready || canCreate) noteLocalVmSeen(target, status);
+        reason = status.problem ?? reason;
+      } else if (surface === "local") {
+        ready = shouldMountLocalComputer({ requested: "local", hostPlatform: process.platform,
+          providerSupportsLocal: caps?.localComputerMcp === true }) && Boolean(readCuaConnection());
+      } else if (surface === "browser") {
+        ready = caps?.browserMcp === true && builtInBrowserEnabled(cfg) && bot.browser !== false && browserEngineStatus().kind === "ready";
+        reason = "The built-in browser is disabled, not installed, or unsupported by this model engine.";
+      }
+    } catch (error) { reason = error instanceof Error ? error.message : String(error); }
+    const available = ready || canStart || canCreate;
+    return { surface, label: surfaceLabel(surface), available, ready, canStart, canCreate, ...(!available ? { reason } : {}) };
+  }));
+}
+
+function continueComputerSelection(threadId: string, generation: string | undefined, succeeded: boolean): boolean {
+  const selection = computerSelectionTurns.get(threadId);
+  if (!selection || selection.generation !== generation) return false;
+  if (!succeeded || !selection.selected) { computerSelectionTurns.delete(threadId); return false; }
+  const surface = selection.selected;
+  setImmediate(() => {
+    // Stop, deletion, a new user send, or any replacement generation wins.
+    if (computerSelectionTurns.get(threadId) !== selection || directTurnGenerationByThread.get(threadId) !== generation) return;
+    computerSelectionTurns.delete(threadId);
+    const bot = store.projectBotForTask(selection.botId, threadId);
+    if (!bot || bot.computer === "off" || threadBusy(bot.id, threadId)) return;
+    if (store.taskByThread(bot.id, threadId)?.surface !== selection.previousSurface) return;
+    if (queuedThreadPosition(bot.id, threadId) !== null) return;
+    if (store.activePath(threadId).findLast(message => message.role === "user" && message.kind === "text")?.id !== selection.source.id) return;
+    store.patchTask(bot.id, threadId, { surface });
+    const text = `The computer selection is now ${surfaceLabel(surface)}. Continue the user's original request using the tools mounted for this turn; verify the result before claiming success.\n\n${selection.text}`;
+    void startTurn(bot.id, text, { threadId, userMessage: selection.source, computerSelectionContinuation: true }).catch(error => {
+      if (store.taskByThread(bot.id, threadId)) store.appendMessage(threadId, { role: "bot", kind: "activity",
+        tool: { name: `Could not continue on ${surfaceLabel(surface)}: ${error instanceof Error ? error.message : String(error)}`, ok: false } });
+    });
+  });
+  return true;
 }
 
 /** The engine that dispatched each live turn. A bot's settings may change
  * mid-turn; an interrupt or steer must reach the engine actually running. */
 const runningTurnEngines = new Map<string, NonNullable<ReturnType<typeof registry.get>>>();
 function runningTurnInstance(bot: NonNullable<ReturnType<typeof store.bot>>, threadId: string, runOn?: RoutineRunOn): ReturnType<typeof registry.get> {
-  return runningTurnEngines.get(threadId) ?? turnInstance(bot, runOn);
+  return runningTurnEngines.get(threadId) ?? turnInstance(bot, runOn, threadId);
 }
 
 function providerTransitionForTurn(
   bot: NonNullable<ReturnType<typeof store.bot>>,
   runOn?: RoutineRunOn,
+  threadId?: string,
 ): string | null {
-  const provider = turnProvider(bot, runOn);
+  const provider = turnProvider(bot, runOn, threadId);
   return provider && computerProviderConfigTransitions.has(provider)
     ? providerTransitionMessage(provider)
     : null;
@@ -3870,6 +4129,7 @@ function releaseLocalVmThread(threadId: string): void {
 void (async () => {
   if (localVmMode(cfg) !== "per-bot") {
     const status = await containerComputerStatus(undefined, undefined, SHARED_LOCAL_VM_TARGET).catch(() => null);
+    noteLocalVmSeen(SHARED_LOCAL_VM_TARGET, status);
     if (shouldArmLocalVmIdle(status)) localVmIdleFor(SHARED_LOCAL_VM_TARGET).touch();
     return;
   }
@@ -3880,6 +4140,7 @@ void (async () => {
     containerComputerStatus(undefined, undefined, target).catch(() => null),
   ));
   existing.forEach(({ target }, index) => {
+    noteLocalVmSeen(target, statuses[index]);
     if (shouldArmLocalVmIdle(statuses[index])) localVmIdleFor(target).touch();
   });
 })().catch(() => {
@@ -3904,6 +4165,7 @@ async function localVmInventoryPayload() {
   const instances = existing.flatMap(({ bot, target }, index) => {
     const status = statuses[index];
     if (!status) return [];
+    noteLocalVmSeen(target, status);
     const inUse = localVmActiveThreads.has(target.key) ||
       localVmLeaseFor(target).current(localVmOwnerBusy) !== null;
     const entry = localVmInventoryEntry(bot, status, inUse);
@@ -4338,6 +4600,7 @@ bus.subscribe((event: RuntimeEvent) => {
             store.setTaskActivity(bot.id, event.threadId, "idle");
           }
           directTurnBots.delete(event.threadId);
+          if (continueComputerSelection(event.threadId, generation, event.ok)) return;
           // Ordinary completion still drains from the existing bus subscribers.
           // An asynchronous screenshot finishes after those subscribers ran.
           if (resumeQueued) {
@@ -4398,7 +4661,7 @@ bus.subscribe((event: RuntimeEvent) => {
         // A failed peer turn stays a chip too. The bot that delegated is woken
         // with the failure and answers the person in its own thread — buzzing
         // here as well would ring twice for one piece of news.
-        if ((!routineRun || routineRun.status === "completed") && !internal) {
+        if ((!routineRun || routineRun.status === "completed") && !internal && !computerSelectionTurns.get(event.threadId)?.selected) {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
           const completionDetail = routineRun
@@ -5183,6 +5446,8 @@ async function startTurn(
      * The prompt is control-plane context: it reaches the provider without
      * masquerading as another message authored by the user. */
     cardContinuation?: boolean;
+    /** A single tool-requested surface change continues the same human ask. */
+    computerSelectionContinuation?: boolean;
     /** Earlier text message this user turn is replying to. */
     replyTo?: Message;
     /** Stable identity supplied by the composer so a network retry cannot
@@ -5220,7 +5485,7 @@ async function startTurn(
   if (bot.approvalGrant) {
     throw Object.assign(new Error("this bot's approval level is still being confirmed — try again"), { status: 409 });
   }
-  const transitionError = providerTransitionForTurn(bot, opts?.runOn);
+  const transitionError = providerTransitionForTurn(bot, opts?.runOn, threadId);
   if (transitionError) throw Object.assign(new Error(transitionError), { status: 409 });
   if (providerFleetReloading) throw Object.assign(new Error("provider settings are being updated — try again shortly"), { status: 409 });
   // A workspace at its monthly spend limit starts no turn of any kind: a
@@ -5259,11 +5524,12 @@ async function startTurn(
   }
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
-  const instance = turnInstance(bot, opts?.runOn);
+  const plan = turnSurfacePlan(bot, opts?.runOn, threadId);
+  const instance = turnInstance(bot, opts?.runOn, threadId);
   if (!instance) {
     throw Object.assign(
       new Error(
-        opts?.runOn === "cloud" || bot.computer === "cloud" || inheritedTeamComputer(bot)
+        turnProvider(bot, opts?.runOn, threadId) === "orgo"
           ? "the Cloud VM runner is unavailable — configure Orgo in App Settings"
           : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
       ),
@@ -5293,10 +5559,13 @@ async function startTurn(
   if (providerInstancesChanging.has(instanceId)) {
     throw Object.assign(new Error("this provider account is being updated — try again shortly"), { status: 409 });
   }
-  const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
+  const switchedEngine = instance.instanceId !== bot.modelSelection.instanceId;
+  const model = opts?.runOn === "cloud" || switchedEngine ? instance.models.default : bot.modelSelection.model;
   // a cloud routine borrows the instance default model, so it borrows no
   // per-bot effort either
-  const effort = opts?.runOn === "cloud" ? undefined : bot.modelSelection.effort;
+  const effort = opts?.runOn === "cloud" || switchedEngine ? undefined : bot.modelSelection.effort;
+  const variant = opts?.runOn === "cloud" || switchedEngine ? undefined : bot.modelSelection.variant;
+  assertModelVariantSupported({ variant, effort }, instance.adapter.capabilities);
   // A selection can be persisted while its engine is offline. Re-check when
   // the engine returns so an old or unsupported value never reaches a CLI.
   if (effort && !instance.adapter.capabilities.effortLevels?.includes(effort)) {
@@ -5439,6 +5708,11 @@ async function startTurn(
   directTurnDispatchClaims.set(threadId, { id: dispatchClaimId, botId, threadId, phase: "setup" });
   directTurnBots.set(threadId, bot);
   beginInternalCapabilityGeneration(threadId, dispatchClaimId);
+  if (!opts?.computerSelectionContinuation && !opts?.cardContinuation && !opts?.automationSource && !opts?.unattended &&
+      !opts?.commsDepth && !opts?.coordination && !inheritedTeamComputer(bot) && bot.computer !== "off" && agentsMounted) {
+    const source = store.activePath(threadId).findLast(message => message.id === userMessage?.id && message.role === "user" && !message.peerAsk);
+    if (source) computerSelectionTurns.set(threadId, { generation: dispatchClaimId, botId: bot.id, source, text });
+  }
   store.setTaskActivity(bot.id, threadId, "working");
   // A closed thread that gets a new turn is open again: the person (or the
   // opener) picked it back up, so its row returns to the sidebar and
@@ -5535,14 +5809,12 @@ async function startTurn(
       // browser is withheld (workspace flag, its own switch, or an engine
       // without browser tools) gets told so instead of silently falling back
       // to a desktop it was never meant to touch.
-      const browserOn =
-        builtInBrowserEnabled(cfg) &&
-        bot.browser !== false &&
-        instance.adapter.capabilities.browserMcp === true;
-      const plan = resolveSurface({
-        destination: teamComputer || opts?.runOn === "cloud" ? "cloud" : bot.computer, // cloud routine overrides the MAUS default
-        browserOn,
-      });
+      // The conversation's own place wins over the bot default: the person
+      // pinned it from the composer, or its first Auto turn recorded where it
+      // landed. A team computer or a cloud routine is not this conversation's
+      // choice, so those ignore the pin.
+      const dispatchTask = store.taskByThread(bot.id, threadId);
+      if (plan.clearPin && dispatchTask) store.patchTask(bot.id, threadId, { surface: undefined });
       const wants = plan.computer;
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let browserCapture: (() => Promise<{ png: string; format: string }>) | null = null;
@@ -5551,62 +5823,89 @@ async function startTurn(
 
       // Explicit destinations are strict. In particular, Local VM must never
       // fall through to host CUA and accidentally click on the user's Mac.
-      if (wants === "vm") {
+      // The Local VM attach, shared by explicit "Local VM" and by Auto. Explicit
+      // is strict and throws with the reason. Auto only reaches a VM this bot
+      // already has — ready now, or one whose desktop image is prepared and can
+      // be recreated on demand after idling away — and never creates a first
+      // VM on its own; every failure there is a quiet "not this place".
+      const attachLocalVm = async (strict: boolean): Promise<boolean> => {
         if (!mountsComputerMcp) {
+          if (!strict) return false;
           throw new Error("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination");
         }
         const localVmTarget = localVmTargetForBot(bot.id);
-        bindTurnComputer(resourceOwner, `computer:vm:${localVmTarget.key}`, true);
-        if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(localVmTarget.key)) {
-          throw new Error("this Local VM is being started, stopped, or replaced — wait for setup to finish");
+        if (!strict) {
+          // Nothing this process has ever seen for this target, and nobody is
+          // relying on an unattended run: do not pay for a runtime probe.
+          if (!localVmSeen.has(localVmTarget.key) && !opts?.automationSource) return false;
+          const seen = await containerComputerStatus(undefined, undefined, localVmTarget).catch(() => null);
+          if (!seen || !autoLocalVmAttachable(seen)) return false;
+          if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(localVmTarget.key)) return false;
         }
-        // Claim before the first await. The lifecycle route performs its
-        // matching check synchronously, so neither side can enter while the
-        // other is between inspection and mutation.
-        if (!localVmLeaseFor(localVmTarget).claim(threadId, bot.id, localVmOwnerBusy)) {
-          throw new Error("this Local VM is already being used by another turn — wait for that turn to finish");
-        }
-        localVmThreadTargets.set(threadId, localVmTarget);
-        localVmActiveThreads.set(localVmTarget.key, threadId);
-        localVmIdleFor(localVmTarget).touch();
-        const localVm = await readyLocalVmForTurn(bot.id, localVmTarget);
-        if (!localVm.ready || !localVm.runtime) {
-          throw new Error(`${localVm.problem ?? "the Local VM is not ready"} (App Settings → Computers)`);
-        }
-        integrations.localComputer = containerComputerMcp(
-          localVm.runtime,
-          controlIntegration(bot.id, threadId, dispatchClaimId),
-          localVmTarget,
-        );
-        computerKind = "vm";
-        // Same contract as the Orgo and VPS branches below: without this the
-        // poller never starts, so the Local VM publishes no `screen` events
-        // and every client that only has the stream (the phone) waits
-        // forever. The web panel hid the gap by polling the screenshot
-        // route itself.
-        previewCapture = () => {
-          // The shared desktop outlives the turn. Once another thread owns
-          // it, a capture still in flight would picture ITS work under this
-          // bot's name — live and in the settled transcript frame, which is
-          // taken after the lease is already released. No owner means the
-          // desktop is simply idle: that final frame is ours to keep.
-          const owner = localVmLeaseFor(localVmTarget).current(localVmOwnerBusy);
-          if (owner && owner.threadId !== threadId) {
-            throw new Error("the Local VM moved on to another turn");
+        try {
+          await bindTurnComputer(resourceOwner, `computer:vm:${localVmTarget.key}`, true);
+          if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(localVmTarget.key)) {
+            throw new Error("this Local VM is being started, stopped, or replaced — wait for setup to finish");
           }
-          return containerComputerFrame(undefined, undefined, localVmTarget);
-        };
+          // Claim before the first await. The lifecycle route performs its
+          // matching check synchronously, so neither side can enter while the
+          // other is between inspection and mutation.
+          if (!localVmLeaseFor(localVmTarget).claim(threadId, bot.id, localVmOwnerBusy)) {
+            throw new Error("this Local VM is already being used by another turn — wait for that turn to finish");
+          }
+          localVmThreadTargets.set(threadId, localVmTarget);
+          localVmActiveThreads.set(localVmTarget.key, threadId);
+          localVmIdleFor(localVmTarget).touch();
+          const localVm = await readyLocalVmForTurn(bot.id, localVmTarget);
+          if (!localVm.ready || !localVm.runtime) {
+            throw new Error(`${localVm.problem ?? "the Local VM is not ready"} (App Settings → Computers)`);
+          }
+          integrations.localComputer = containerComputerMcp(
+            localVm.runtime,
+            controlIntegration(bot.id, threadId, dispatchClaimId),
+            localVmTarget,
+          );
+          // Same contract as the Orgo and VPS branches below: without this the
+          // poller never starts, so the Local VM publishes no `screen` events
+          // and every client that only has the stream (the phone) waits
+          // forever. The web panel hid the gap by polling the screenshot
+          // route itself.
+          previewCapture = () => {
+            // The shared desktop outlives the turn. Once another thread owns
+            // it, a capture still in flight would picture ITS work under this
+            // bot's name — live and in the settled transcript frame, which is
+            // taken after the lease is already released. No owner means the
+            // desktop is simply idle: that final frame is ours to keep.
+            const owner = localVmLeaseFor(localVmTarget).current(localVmOwnerBusy);
+            if (owner && owner.threadId !== threadId) {
+              throw new Error("the Local VM moved on to another turn");
+            }
+            return containerComputerFrame(undefined, undefined, localVmTarget);
+          };
+          return true;
+        } catch (error) {
+          if (strict) throw error;
+          releaseLocalVmThread(threadId);
+          return false;
+        }
+      };
+      if (wants === "vm") {
+        if (await attachLocalVm(true)) computerKind = "vm";
       } else if (wants === "local") {
         if (!shouldMountLocalComputer({
           requested: "local",
           hostPlatform: process.platform,
           providerSupportsLocal: mountsLocalComputer,
         })) {
-          throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
+          // Name the condition that actually failed: a person told "choose an
+          // ACP engine" while already on one has nowhere to go.
+          throw new Error(mountsLocalComputer
+            ? `local computer control is not available on ${process.platform} — select another destination`
+            : "this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
         }
         const cua = readCuaConnection();
         if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart Open Orgo Bot");
-        bindTurnComputer(resourceOwner, "computer:host");
+        await bindTurnComputer(resourceOwner, "computer:host");
         integrations.localComputer = gatedLocalComputer(cua, controlIntegration(bot.id, threadId, dispatchClaimId));
         computerKind = "local";
       }
@@ -5621,9 +5920,10 @@ async function startTurn(
         if (!unsupported) {
           // The remote lifecycle and container are shared by this bot. Keep
           // its explicit computer turns serialized; ordinary threads still run.
-          bindTurnComputer(resourceOwner, `computer:vps:${vpsSshAlias(cfg)}:${bot.id}`, true);
+          await bindTurnComputer(resourceOwner, `computer:vps:${vpsSshAlias(cfg)}:${bot.id}`, true);
           activeVpsThreads.set(bot.id, threadId);
-          const remote = wants === "cloud" || bot.autoStartVps
+          let remote;
+          remote = vps.vpsStartsForTurn({ wants, autoStartVps: bot.autoStartVps, automationSource: opts?.automationSource })
             ? await vps.vpsComputerAction("provision", cfg, bot.id)
             : await vps.inspectVpsForAuto(cfg, bot.id);
           if (remote?.ready && remote.sshAlias) {
@@ -5647,21 +5947,27 @@ async function startTurn(
       }
 
       // Cloud is also strict when explicitly selected. Auto (unset) reuses an
-      // existing cloud orgo, then falls back to host CUA without provisioning.
+      // existing Orgo computer, then falls back without provisioning a new one.
       if (teamComputer) {
         const attached = await attachTeamOrgo(teamComputer, bot.id, resourceOwner, mountsCloudComputer, false);
         integrations.computer = attached.integration;
         previewCapture = attached.capture;
         computerKind = "orgo";
       }
-      if (!teamComputer && (wants === "cloud" || wants === undefined) && cloudBackend === "orgo" && orgo.orgoConfigured(cfg)) {
+      if (!teamComputer && mountsCloudComputer && (wants === "cloud" || wants === undefined) && cloudBackend === "orgo" && orgo.orgoConfigured(cfg)) {
         // Explicit cloud turns can provision/wake the same bot's Orgo. Claim
         // before any network await so setup itself cannot race another turn.
-        if (wants === "cloud") bindTurnComputer(resourceOwner, `computer:orgo-bot:${bot.id}`, true);
+        if (wants === "cloud") await bindTurnComputer(resourceOwner, `computer:orgo-bot:${bot.id}`, true);
         if (!mountsCloudComputer && wants === "cloud") {
           throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
         }
-        let b = await orgo.findOrgo(cfg, bot.id, bot.orgoComputerId).catch(() => null);
+        let b;
+        try {
+          b = await orgo.findOrgo(cfg, bot.id, bot.orgoComputerId);
+        } catch (error) {
+          if (wants === "cloud") throw error;
+          b = null;
+        }
         let lifecycle = orgo.orgoTurnLifecycleAction({
           explicitCloud: wants === "cloud",
           canMount: mountsCloudComputer,
@@ -5692,7 +5998,7 @@ async function startTurn(
           });
         }
         if (b && lifecycle === "attach") {
-          bindTurnComputer(resourceOwner, `computer:orgo:${b.id}`, false);
+          await bindTurnComputer(resourceOwner, `computer:orgo:${b.id}`, false);
           previewCapture = () => orgo.screenshotOrgo(cfg, bot.id, b!.id);
           if (mountsCloudComputer) {
             integrations.computer = {
@@ -5714,10 +6020,19 @@ async function startTurn(
 
       // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
       // the harness only reads its already-running connection descriptor.
+      // Auto reaches a Local VM this bot already has before it ever touches the
+      // host's own desktop: on a headless server that VM is the only desktop
+      // there is, and a person who prepared one meant it to be used.
+      if (wants === undefined && !integrations.computer && !integrations.localComputer && await attachLocalVm(false)) computerKind = "vm";
+      // An unattended run on a bot with a VPS configured never lands on the
+      // host's own desktop instead: a scheduled job clicking on someone's
+      // laptop is worse than a scheduled job that fails and says why.
+      const unattendedVps = cloudBackend === "vps" && Boolean(opts?.automationSource);
       if (
         !integrations.computer &&
         !integrations.localComputer &&
         wants === undefined &&
+        !unattendedVps &&
         shouldMountLocalComputer({
           requested: undefined,
           hostPlatform: process.platform,
@@ -5726,7 +6041,7 @@ async function startTurn(
       ) {
         const cua = readCuaConnection();
         if (cua) {
-          bindTurnComputer(resourceOwner, "computer:host");
+          await bindTurnComputer(resourceOwner, "computer:host");
           integrations.localComputer = gatedLocalComputer(cua, controlIntegration(bot.id, threadId, dispatchClaimId));
           computerKind = "local";
         }
@@ -5736,11 +6051,14 @@ async function startTurn(
         cloudBackend === "vps" &&
         !integrations.computer &&
         !integrations.localComputer &&
-        autoVpsProblem
+        autoVpsProblem &&
+        !computerSelectionTurns.has(threadId)
       ) {
-        const hint = bot.autoStartVps
-          ? "Check the VPS connection in App Settings → Connections."
-          : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
+        const hint = opts?.automationSource
+          ? "This scheduled run tried to start the VPS computer and could not reach it. Check the VPS connection in App Settings → Connections."
+          : bot.autoStartVps
+            ? "Check the VPS connection in App Settings → Connections."
+            : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
         throw new Error(`${autoVpsProblem}. ${hint}`);
       }
       if (instance.adapter.capabilities.customMcp === true) mountSuperBrowser(integrations);
@@ -5819,9 +6137,14 @@ async function startTurn(
           description: liveBot?.description ?? bot.description,
           text: providerText,
         });
+      // One place per turn. On Auto the branches above may have reached a
+      // computer; then the built-in browser stays unmounted and web work
+      // happens in that computer's own browser, where the person can see it.
+      const mountedComputer = surfaceOfComputerKind(computerKind);
       if (
         liveBot &&
         plan.browser &&
+        !(plan.computer === undefined && mountedComputer) &&
         builtInBrowserEnabled(cfg) &&
         liveBot.browser !== false &&
         instance.adapter.capabilities.browserMcp === true
@@ -5841,6 +6164,15 @@ async function startTurn(
           browserCapture = () => browserRuntime.withAgentAction(session, () => agentBrowserFrame(frame));
         }
       }
+      // An Auto conversation remembers where its first turn landed, so later
+      // turns stay there and the composer can show it. Explicit settings are
+      // not recorded: changing the bot's Works on should move its threads.
+      if (bot.computer === undefined && !teamComputer && opts?.runOn !== "cloud" && !plan.pinned) {
+        const used = mountedComputer ?? (integrations.browser ? "browser" : null);
+        if (used) store.patchTask(bot.id, threadId, { surface: used });
+      }
+      const computerSelection = computerSelectionTurns.get(threadId);
+      if (computerSelection) computerSelection.mounted = mountedComputer ?? (integrations.browser ? "browser" : undefined);
       // A cancelled adapter can be between accepting sendTurn and revealing
       // its provider turn id. Never overlap a replacement with that ambiguous
       // pre-id window: wait for the old handshake to settle or for its bounded
@@ -5873,7 +6205,7 @@ async function startTurn(
         { id: "files", label: "File locations", text: worksInWorkspace && opts?.runOn !== "cloud" ? workspaceLocationsPrompt(bot.id, cwd, liveBot?.cwd ?? bot.cwd) : "" },
         { id: "computer", label: "Computer", text: computerPrompt(computerPromptKind) },
         { id: "team-computer", label: "Team computer", text: teamComputerPrompt(teamComputer) },
-        { id: "plan", label: "Surface", text: plan.note },
+        { id: "plan", label: "Surface", text: surfacePrompt({ computer: mountedComputer, browser: Boolean(integrations.browser) }, { pinned: plan.pinned, note: plan.note, canSelect: computerSelectionTurns.has(threadId) }) },
         // gated on the integration, not the key: the hint only goes to a
         // bot whose driver actually mounted the tools
         { id: "composio", label: "Connected apps", text: integrations.composio ? COMPOSIO_PROMPT : "" },
@@ -5890,6 +6222,9 @@ async function startTurn(
         { id: "profile", label: "Profile changes", text: profilePrompt },
         { id: "learn", label: "Skill authoring", text: learnPrompt },
         { id: "section-context", label: "Section context", text: sectionContextSystemPrompt(bot.section) },
+        // what the bot said lately in its other conversations, so a task
+        // never redoes — or forgets — what another one already did
+        { id: "recent", label: "Recent work", text: recentWorkPrompt(recentWork(store, bot, { userName: cfg.profile?.name?.trim() || "User", currentThreadId: threadId })) },
         { id: "memory", label: "Memory", text: memorySystemPrompt(bot.id, { managedWrites: Boolean(integrations.agents), fileTools: worksInWorkspace }) },
         { id: "skills", label: "Skills index", text: privateWorkspace ? skillsSystemPrompt(bot.id) : "" },
         { id: "skill-instructions", label: "Skill instructions", text: skillInstructions },
@@ -5902,11 +6237,12 @@ async function startTurn(
         threadId,
         botId: bot.id,
         text: turnText,
-        refreshSystemPrompt: Boolean(opts?.coordination),
+        refreshSystemPrompt: true,
         images: turnImages,
         approvalMode: approvalModeForTurn(bot, commsDepth > 0),
         model,
         effort,
+        variant,
         // a rewound thread never resumes the abandoned branch's session
         // the active task's own session — another task's cursor would
         // resume the wrong conversation and defeat the context bubble
@@ -5917,6 +6253,7 @@ async function startTurn(
         systemStable: prompt.stable,
         systemVolatile: prompt.volatile,
         integrations,
+        mcpFromUserConfig: claudeUserMcpEnabled(cfg),
         cwd,
       }), () => !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
         await instance.adapter.interruptTurn(threadId).catch(() => {});
@@ -5969,6 +6306,7 @@ async function startTurn(
         drainDelegationWakes();
       }
     } catch (e) {
+      if (computerSelectionTurns.get(threadId)?.generation === dispatchClaimId) computerSelectionTurns.delete(threadId);
       settleDirectFollowup(dispatchClaimId);
       clearCancelledProviderHandshake(threadId, `direct:${dispatchClaimId}`);
       clearDirectTurnDispatch(threadId, dispatchClaimId);
@@ -6082,6 +6420,7 @@ function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
     status: run.status,
   };
   if (run.goalStatus) card.goalStatus = run.goalStatus;
+  if (run.deferredAt != null && run.status === "queued") card.deferredAt = run.deferredAt;
   if (run.threadId) card.executionThreadId = run.threadId;
   if (summary) card.summary = summary;
   if (error) card.error = error;
@@ -6111,6 +6450,8 @@ function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): strin
             ? "was cancelled"
             : card.status === "missed"
               ? "was missed"
+              : card.status === "queued" && card.deferredAt != null
+                ? "deferred: target busy"
               : card.status
   );
   return `Routine “${card.routineName}” ${state}`;
@@ -6322,6 +6663,16 @@ routines = new RoutineManager({
     const notificationBot = routineSourceOwner(run)?.bot ?? bot;
     notify(buildNotification("routine-failed", notificationBot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
   },
+  onRunDeferred: (run) => {
+    const bot = store.bot(run.botId);
+    if (!bot) return;
+    const minutes = run.deferredAt != null && run.deferredNoticeAt != null
+      ? Math.max(1, Math.round((run.deferredNoticeAt - run.deferredAt) / 60_000))
+      : null;
+    const detail = `${redactSecretsInText(run.routineName)}: target busy${minutes != null ? ` for ${minutes} minutes` : ""}`;
+    const notificationBot = routineSourceOwner(run)?.bot ?? bot;
+    notify(buildNotification("routine-deferred", notificationBot, routineSourceThread(run) ?? bot.threadId, detail));
+  },
 });
 // The scheduler receipt and room transcript live in separate durable stores.
 // If the process exited between those two writes, prefer the correlated
@@ -6426,6 +6777,9 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
       if (computerProviderConfigTransitions.size > 0) {
         return deletionResponse( 409, { error: "computer provider settings are being updated — wait before deleting this bot" });
       }
+      if (localVmModeChangeBusy) {
+        return deletionResponse(409, { error: "Local VM settings are being updated — wait before deleting this bot" });
+      }
       if (orgoLifecycleBusyBots.has(bot.id)) {
         return deletionResponse( 409, { error: "wait for this bot's cloud computer action to finish before deleting the bot" });
       }
@@ -6464,34 +6818,52 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
         releaseComputerLifecycle();
         return deletionResponse( 409, { error: "this bot or one of its channels is securely saving a credential" });
       }
+      let claimedLocalVmTarget: LocalVmTarget | null = null;
       try {
+        let localVmCleanup: { target: LocalVmTarget; removeContainer: boolean } | null = null;
         if (localVmMode(cfg) === "per-bot") {
           const target = perBotLocalVmTarget(bot.id);
           if (localVmActiveThreads.has(target.key) || localVmLifecycleBusy.has(target.key)) {
             return deletionResponse( 409, { error: "stop this bot's Local VM turn or setup action before deleting the bot" });
           }
+          if (localVmLeaseFor(target).current(localVmOwnerBusy)) {
+            return deletionResponse(409, { error: "stop this bot's Local VM turn before deleting the bot" });
+          }
+          // Hold the target from preflight through deletion. A simultaneous
+          // mode change or lifecycle route must not recreate the container
+          // after we checked it and before its bot owner disappears.
+          localVmLifecycleBusy.add(target.key);
+          claimedLocalVmTarget = target;
           const vm = await containerComputerStatus(undefined, undefined, target);
           if (!vm.daemonUp && existsSync(target.workspaceDir)) {
             return deletionResponse( 409, {
-              error: "start the container runtime and delete this bot's Local VM before deleting the bot",
+              error: "start the container runtime so Open Orgo Bot can remove this bot's Local VM while deleting it",
             });
           }
-          if (vm.container !== "missing") {
-            return deletionResponse( 409, { error: "delete this bot's Local VM from its Computer panel before deleting the bot" });
+          if (vm.container !== "missing" && !vm.managed) {
+            return deletionResponse(409, {
+              error: `The container named ${vm.container_name} was not created by Open Orgo Bot. Remove it manually before deleting this bot`,
+            });
           }
+          localVmCleanup = {
+            target,
+            removeContainer: vm.container !== "missing",
+          };
         }
-        // VPS containers are also durable and may outlive a destination or
-        // backend switch. Keep the bot as the discoverable owner until the
-        // person explicitly removes that container from Settings.
+        // Preflight every provider before deleting any resource. Cleanup can
+        // still fail mid-flight across independent providers, but a missing
+        // credential or offline daemon should not cause avoidable partial work.
         const vpsInventory = await vps.listManagedVpsComputers(cfg, managedOrgoOwners());
         if (vpsInventory.configured && !vpsInventory.available) {
           return deletionResponse( 503, {
-            error: `${vpsInventory.problem ?? "VPS computer inventory is unavailable"}. Refresh Settings → Computers before deleting this bot`,
+            error: `${vpsInventory.problem ?? "VPS computer inventory is unavailable"}. The bot was kept so its computer can be retried safely`,
           });
         }
-        if (vpsInventory.instances.some((instance) => instance.ownerBotId === bot.id)) {
-          return deletionResponse( 409, {
-            error: "remove this bot's VPS computer from Settings → Computers before deleting the bot",
+        const ownedVpsComputers = vpsInventory.instances.filter((instance) => instance.ownerBotId === bot.id);
+
+        if (botOrgoRecovery.length > 0 && !orgo.orgoConfigured(cfg)) {
+          return deletionResponse(409, {
+            error: "Reconnect the Orgo account that owns this bot's remembered cloud computer, then retry deletion",
           });
         }
         // LIST is eventually consistent, and a remembered Orgo may also have
@@ -6527,21 +6899,40 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
         const cloudInventory = await orgo.listManagedOrgos(cfg, managedOrgoOwners());
         if (cloudInventory.configured && !cloudInventory.available) {
           return deletionResponse( 503, {
-            error: `${cloudInventory.problem ?? "cloud computer inventory is unavailable"}. Refresh Settings → Computers before deleting this bot`,
+            error: `${cloudInventory.problem ?? "cloud computer inventory is unavailable"}. The bot was kept so its computer can be retried safely`,
           });
         }
-        if (cloudInventory.instances.some((instance) => instance.ownerBotId === bot.id)) {
-          return deletionResponse( 409, {
+        const ownedOrgoComputers = cloudInventory.instances.filter((instance) => instance.ownerBotId === bot.id);
+        if (ownedOrgoComputers.length > 0) {
+          return deletionResponse(409, {
             error: "delete this bot's cloud computer from Settings → Computers before deleting the bot",
           });
         }
-        // Establish a durable cleanup intent before any teardown. A malformed
-        // or unreadable journal therefore rejects the delete with the bot and
-        // all of its live work untouched. The intent is aborted if a later
-        // pre-delete side effect fails, and committed only after Store deletion.
+
+        // Revalidate a reviewed Chief-of-Staff request and establish the
+        // browser cleanup intent before the first irreversible provider
+        // mutation. A stale review or damaged journal therefore leaves every
+        // computer intact. Cross-provider rollback is impossible, so every
+        // subsequent operation is exact and retry-safe.
         revalidate();
         const browserCleanupRequest = browserCleanup.prepare("bot", bot.id);
         try {
+          for (const instance of ownedVpsComputers) {
+            await vps.removeManagedVpsComputer(cfg, managedOrgoOwners(), instance.name, instance.name);
+          }
+          if (localVmCleanup) {
+            if (localVmCleanup.removeContainer) {
+              await containerComputerAction("remove", undefined, undefined, localVmCleanup.target);
+            }
+            // Unlike the standalone "Delete VM" action, deleting the bot is
+            // a complete erasure: its now-ownerless desktop files and browser
+            // session must not remain hidden on disk or block the event loop.
+            await removeDirectory(localVmCleanup.target.workspaceDir, { recursive: true, force: true });
+            localVmSeen.delete(localVmCleanup.target.key);
+            localVmIdles.get(localVmCleanup.target.key)?.cancel();
+            localVmIdles.delete(localVmCleanup.target.key);
+            localVmLeases.forget(localVmCleanup.target.key);
+          }
           // a running turn dies with its bot
           // Invalidate every bot-callable bearer before the first asynchronous
           // teardown step. A request that already passed its initial header
@@ -6554,7 +6945,6 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
             revokeInternalCapabilitiesForThread(task.threadId);
           }
           await interruptAllDirectThreads(bot.id);
-          revalidate();
           // Deletion removes the thread before a late turn.completed can fold
           // staged provider images into a message, so dispose them here.
           for (const task of store.tasks(bot.id)) {
@@ -6575,6 +6965,12 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
           const target = perBotLocalVmTarget(bot.id);
           localVmIdles.get(target.key)?.cancel();
           localVmIdles.delete(target.key);
+          // Provider and local-computer teardown above can await for an
+          // arbitrary amount of time. A reviewed Chief deletion is bound to
+          // the exact target profile it presented; re-check that receipt at
+          // the final durable mutation boundary so a concurrent profile edit
+          // cannot be erased under a stale approval.
+          revalidate();
           store.deleteBot(bot.id, setupRequest);
           // Removing schedules is not a security revocation. Keep them intact
           // if the bot/receipt write fails, so a failed deletion is retryable.
@@ -6605,6 +7001,7 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
         }
         return deletionResponse( 200, { ok: true });
       } finally {
+        if (claimedLocalVmTarget) localVmLifecycleBusy.delete(claimedLocalVmTarget.key);
         releaseComputerLifecycle();
         releasePhoneSecretMutation();
       }
@@ -7132,6 +7529,7 @@ async function runGroupMemberTurn(
   // A workspace at its monthly spend limit rechecks the cap at execution time
   // for every room, goal, queued, calendar, and chained-mention turn.
   assertWithinBudget(cfg, DATA_DIR);
+  assertModelVariantSupported(preparedSelection, instance.adapter.capabilities);
   const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
   const skillAuthoring =
     skillAuthoringEnabled(cfg) &&
@@ -7212,10 +7610,11 @@ async function runGroupMemberTurn(
   if (!readyGroup || !stillOwnsThread || !readyGroup.memberIds.includes(readyBot.id)) return false;
   const setupChanged =
     turnInstance(readyBot) !== instance ||
-    approvalModeForTurn(readyBot, Boolean(orchestration?.roomHandoffId)) !== preparedApprovalMode ||
+    roomTurnApprovalMode(readyBot, orchestration) !== preparedApprovalMode ||
     readyBot.modelSelection.instanceId !== preparedSelection.instanceId ||
     readyBot.modelSelection.model !== preparedSelection.model ||
     readyBot.modelSelection.effort !== preparedSelection.effort ||
+    readyBot.modelSelection.variant !== preparedSelection.variant ||
     readyBot.composio !== preparedComposio;
   if (setupChanged) {
     if (setupRetry === 0) {
@@ -7323,7 +7722,15 @@ async function runGroupMemberTurn(
       readyBot.browser !== false &&
       instance.adapter.capabilities.browserMcp === true,
   });
-  if (roomPlan.browser) {
+  // Channels currently mount a team Orgo computer or a Local VM. Do not let an
+  // explicitly selected, unsupported destination become a tool-free turn
+  // that can claim to have acted on that screen.
+  if (!roomTeamComputer && (roomPlan.computer === "cloud" || roomPlan.computer === "local")) {
+    throw new Error("This computer destination is not available in channels yet — open a bot thread to work on it, or use a Local VM, team computer, or Browser here");
+  }
+  // One place per room turn as well: a team computer reached on Auto means
+  // no separate built-in browser.
+  if (roomPlan.browser && !(roomPlan.computer === undefined && roomTeamComputer)) {
     const selectedProfile = readyBot.browserProfile;
     const browser = await browserIntegration(readyBot.id, selectedProfile, { threadId, generation: internalGeneration });
     if (browser) integrations.browser = browser.integration;
@@ -7355,7 +7762,7 @@ async function runGroupMemberTurn(
     }
     // A distinct identity fences cleanup even in shared mode on the same room thread.
     const target = { ...localVmTargetForBot(readyBot.id) };
-    bindTurnComputer(resourceOwner, `computer:vm:${target.key}`, true);
+    await bindTurnComputer(resourceOwner, `computer:vm:${target.key}`, true);
     if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(target.key)) {
       throw new Error("this Local VM is being started, stopped, or replaced");
     }
@@ -7460,15 +7867,33 @@ async function runGroupMemberTurn(
     if (drift.drift !== Boolean(bot.soulDrift)) store.patchBot(bot.id, { soulDrift: drift.drift });
   }
   const roomMemory = memorySystemPrompt(bot.id, { managedWrites: Boolean(integrations.agents), fileTools: worksInWorkspace });
+  // The same brief a 1:1 turn gets: what this member said lately in its
+  // other conversations, so a standup is answered from what happened. A
+  // brief can carry a private chat into the room; as with session_search
+  // (#754) the room is told, once per source thread, rather than the
+  // crossing being blocked.
+  const recentLines = recentWork(store, bot, { userName, currentThreadId: threadId });
+  {
+    const crossing = claimRecallCrossings(threadId, recentLines.filter((line) => line.private).map((line) => line.threadId));
+    if (crossing.count) {
+      store.appendMessage(threadId, {
+        role: "bot",
+        kind: "activity",
+        from: { botId: bot.id, name: bot.name, color: bot.color },
+        tool: { name: briefCrossingLabel(bot.name, crossing.count), ok: true },
+      });
+    }
+  }
   const roomSystem = buildSystemPrompt(system, store.bot(bot.id)?.soul ?? bot.soul ?? "", [
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd) : "" },
     { id: "mcp", label: "MCP servers", text: customMcpPrompt(userMcpNames(integrations.custom)) },
     { id: "super-browser", label: "Super Browser", text: integrations.custom?.[SUPER_BROWSER_MCP_NAME] ? SUPER_BROWSER_SYSTEM_PROMPT : "" },
     { id: "computer", label: "Computer", text: computerPrompt(roomTeamComputer ? "orgo" : roomVmTarget ? localVmMode(cfg) === "per-bot" ? "vm-private" : "vm-shared" : null) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer) },
-    { id: "plan", label: "Surface", text: roomPlan.note },
+    { id: "plan", label: "Surface", text: surfacePrompt({ computer: roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : null, browser: Boolean(integrations.browser) }, { note: roomPlan.note }) },
     { id: "browser", label: "Browser", text: integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "" },
     { id: "recall", label: "Recall", text: integrations.agents ? SESSION_SEARCH_SYSTEM_PROMPT : "" },
+    { id: "recent", label: "Recent work", text: recentWorkPrompt(recentLines) },
     { id: "section-context", label: "Section context", text: sectionContextSystemPrompt(bot.section) },
     // the room path has always put a newline before memory and trimmed
     // the block's leading space; keep that so existing prompts are
@@ -7573,15 +7998,18 @@ async function runGroupMemberTurn(
         threadId,
         botId: readyBot.id,
         text,
-        refreshSystemPrompt: Boolean(orchestration?.roomHandoffId),
+        refreshSystemPrompt: true,
         images: turnImages,
-        approvalMode: approvalModeForTurn(readyBot, Boolean(orchestration?.roomHandoffId)),
+        approvalMode: roomTurnApprovalMode(readyBot, orchestration),
         system: roomSystem.text,
         systemStable: roomSystem.stable,
         systemVolatile: roomSystem.volatile,
         cwd,
         integrations,
-        ...memberTurnSelection(readyBot.modelSelection),
+        mcpFromUserConfig: claudeUserMcpEnabled(cfg),
+        ...(instance.instanceId === readyBot.modelSelection.instanceId
+          ? memberTurnSelection(readyBot.modelSelection)
+          : { model: instance.models.default }),
       }), () => abandoned || Boolean(isCancelled?.()), async () => {
         // Stop may have landed while the adapter was authenticating, before
         // it had an active process for the first interrupt to reach. Now that
@@ -7782,8 +8210,10 @@ async function runGroupMemberTurn(
   return true;
   } catch (error) {
     if (providerDispatched) throw error;
+    if (error instanceof DirectTurnSetupCancelled) return false;
     const isSpendCap = typeof error === "object" && error !== null && (error as { code?: string }).code === "spend_cap";
-    if (!roomSpeaker && !isSpendCap) throw error;
+    const isVariantError = typeof error === "object" && error !== null && (error as { code?: string }).code === "unsupported_model_variant";
+    if (!roomSpeaker && !isSpendCap && !isVariantError) throw error;
     const message = error instanceof Error ? error.message : "Local VM setup failed";
     store.appendMessage(threadId, {
       role: "bot", kind: "activity",
@@ -9253,6 +9683,7 @@ function cliProbeEnvironment(): NodeJS.ProcessEnv {
     "COMPOSIO_API_KEY",
     "OMB_COMPOSIO_BROKER_TOKEN",
     "OMB_TTS_KEY",
+    "OMB_FISH_AUDIO_API_KEY",
     "OMB_OPENAI_IMAGE_KEY",
     "OMB_CUSTOM_IMAGE_KEY",
     "ANTHROPIC_API_KEY",
@@ -9304,6 +9735,7 @@ async function localVmPayload(target: LocalVmTarget) {
  */
 async function readyLocalVmForTurn(botId: string, target: LocalVmTarget, isCurrent = () => true) {
   let status = await containerComputerStatus(undefined, undefined, target);
+  noteLocalVmSeen(target, status);
   if (!isCurrent()) return status;
   if (status.ready || !localVmRecreatableOnDemand(status)) return status;
 
@@ -9413,6 +9845,9 @@ function configStatus() {
       // shell and the Settings UI read it so they offer nothing this server
       // would refuse.
       sharedComputers: sharedComputersEnabled(cfg),
+      // Plugins → MCP servers switch: Claude bots also see this machine's
+      // own Claude Code MCP servers
+      claudeUserMcp: claudeUserMcpEnabled(cfg),
     },
     // first-run progress — not a secret; the app decides whether to show
     // the welcome tour from this, never from browser storage
@@ -9450,6 +9885,19 @@ function configForAccess(status: ReturnType<typeof configStatus>, admin: boolean
 
 function mcpServerResponse() {
   return { servers: listMcpServers(cfg.mcpServers) };
+}
+
+/** The fields a new server may set, in whichever shape the form sent — a
+ * command to run or a URL to reach. Absent keys stay absent, so the strict
+ * schema of one shape never sees the other shape's `undefined`s. */
+function mcpServerBody(body: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!body || typeof body !== "object") return out;
+  const record = body as Record<string, unknown>;
+  for (const key of ["command", "args", "env", "type", "url", "headers", "enabled"]) {
+    if (record[key] !== undefined) out[key] = record[key];
+  }
+  return out;
 }
 
 function persistMcpServers(next: Record<string, unknown>): void {
@@ -9803,7 +10251,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // Hosted workspaces have one sign-in authority. A missing optional layer
     // must not accidentally reactivate legacy email/QR credential minting.
     if (HOSTED_WORKSPACE) {
-      if (method === "POST" && ["/api/auth/pair", "/api/auth/pairing", "/api/auth/email/start", "/api/auth/email/verify"].includes(path)) {
+      if (method === "POST" && ["/api/auth/pair", "/api/pair", "/api/auth/pairing", "/api/auth/email/start", "/api/auth/email/verify"].includes(path)) {
         return json(res, 403, { error: "Sign in through the workspace portal." });
       }
       if (workspaceAccess) {
@@ -9886,6 +10334,43 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         return json(res, 200, { session: result.session, environment });
       }
       return json(res, 200, { token: result.token, session: result.session, environment });
+    }
+    // The route the iOS and Android companion apps already POST to. Until now
+    // only the desktop's companion sidecar answered it, so a self-hosted
+    // server had nothing for a native phone to pair against: the app could
+    // reach the server and pass its health probe, then ask for a credential
+    // the server could not issue. Same window, same lockout and the same
+    // single-use exchange as /api/auth/pair above; only the request and
+    // response shapes differ, because the apps were written against the
+    // sidecar. Public and unauthenticated for the same reason
+    // /api/auth/pair is: redeeming a one-time credential IS the sign-in.
+    if (method === "POST" && path === "/api/pair") {
+      if (!/^application\/json\b/i.test(String(req.headers["content-type"] ?? ""))) {
+        return json(res, 415, { error: "send the pairing credential as JSON (content-type: application/json)" });
+      }
+      const body = await readBody(req);
+      const credential = typeof body?.credential === "string" ? body.credential : typeof body?.code === "string" ? body.code : "";
+      const label = typeof body?.deviceName === "string" ? body.deviceName : "";
+      const attemptId = typeof body?.pairRequestId === "string" ? body.pairRequestId : undefined;
+      const paired = sessions.exchange({ code: credential, label, attemptId, source: requestSource(req), fallbackLabel: labelFromUserAgent(req.headers["user-agent"]) });
+      if (!paired.ok) {
+        console.warn(`pairing refused from ${requestSource(req)}: ${paired.error}`);
+        return json(res, paired.status, { error: paired.error });
+      }
+      // The shape the companion apps decode (android/core Models.kt,
+      // PairResponseSerializer): token, device and serverName are required;
+      // hosts and endpoints are advisory and deliberately omitted, because a
+      // harness has no sidecar endpoints to advertise.
+      return json(res, 200, {
+        token: paired.token,
+        device: {
+          id: paired.session.id,
+          name: paired.session.label,
+          createdAt: paired.session.createdAt,
+          lastSeenAt: paired.session.lastSeenAt,
+        },
+        serverName: environmentDescriptor({ environmentId: ENVIRONMENT_ID, desktopManaged: DESKTOP_MANAGED }).label,
+      });
     }
     const gate = resolveRequestAuth(req, {
       sessions,
@@ -9983,11 +10468,22 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const origin = requestOrigin(req);
       const base = publicUrl() ?? (auth.kind === "session" && origin ? origin : null);
       const code = formatPairingCode(opened.code);
+      // Two links for one window. `url` opens the web app and is what a
+      // browser and the iOS app already read. `inviteUrl` is the custom
+      // scheme the native companion scanners accept; it carries the
+      // credential encoding because those scanners cannot take a typed code.
+      const serverName = environmentDescriptor({ environmentId: ENVIRONMENT_ID, desktopManaged: DESKTOP_MANAGED }).label;
+      const invite = base
+        ? `openmausbot://pair?address=${encodeURIComponent(base)}&token=${encodeURIComponent(opened.credential)}&name=${encodeURIComponent(serverName)}`
+        : null;
       return json(res, 200, {
         id: opened.id,
         code,
+        credential: opened.credential,
         expiresAt: opened.expiresAt,
         url: base ? `${base}/pair#code=${code}` : null,
+        inviteUrl: invite,
+        serverName,
         hint: base
           ? null
           : "this server has no public address to put in a link: set OMB_PUBLIC_URL, or open /pair on the address you use and type the code",
@@ -10186,6 +10682,35 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         task: store.taskByThread(internalSender.id, internalCapability.threadId),
         threadId: internalCapability.threadId,
       });
+      if (path === "/api/internal/computer/select" && (method === "GET" || method === "POST")) {
+        const source = computerSelectionTurns.get(internalCapability.threadId);
+        const bot = store.projectBotForTask(internalSender.id, internalCapability.threadId);
+        const canSelect = Boolean(source && source.generation === internalCapability.generation && bot && bot.computer !== "off");
+        if (!bot) return json(res, 403, { error: "Computer selection belongs to a direct bot conversation." });
+        const requested = method === "POST" ? (await readInternalBody()).surface : undefined;
+        if (method === "POST" && !canSelect) return json(res, 403, { error: "Computer selection is only available once per direct user request, with computer access enabled." });
+        if (method === "POST" && requested !== "auto" && !parseSurface(requested)) {
+          return json(res, 400, { error: "surface must be auto, cloud, vm, local, or browser" });
+        }
+        const options = await selectableComputers(bot);
+        const current = source ? source.mounted ?? "off" : await computerPreviewSurface(bot, bot.threadId);
+        requireActiveInternalCapability();
+        if (method === "GET") return json(res, 200, { current, canSelect, options });
+        if (computerSelectionTurns.get(internalCapability.threadId) !== source) return json(res, 409, { error: "The user request ended before its computer was selected." });
+        const option = requested === "auto"
+          ? options.find(option => option.ready && option.surface === current) ?? options.find(option => option.ready && option.surface === "vm") ?? options.find(option => option.ready) ?? options.find(option => option.canStart) ?? options.find(option => option.canCreate && option.surface === "vm") ?? options.find(option => option.canCreate)
+          : options.find(option => option.surface === requested);
+        if (!option?.available) return json(res, 409, { error: option?.reason ?? "No configured computer or browser is available. Open the Computer panel to set one up.", options });
+        if (source!.selected) {
+          if (source!.selected !== option.surface) return json(res, 409, { error: "A computer switch is already pending. End this turn to continue there." });
+        } else {
+          if (option.surface === current && option.ready) return json(res, 200, { status: "ready", surface: current, message: "This computer is already selected. Use its mounted tools." });
+          source!.selected = option.surface;
+          source!.previousSurface = store.taskByThread(bot.id, bot.threadId)?.surface;
+        }
+        return json(res, 200, { status: "pending", surface: option.surface,
+          message: `End this turn now without using the previous computer tools. Open Orgo Bot will continue the original request on ${option.label} with a fresh tool connection.` });
+      }
       if (method === "POST" && path === "/api/internal/memory") {
         const body = await readInternalBody();
         const result = updateMemory(internalSender.id, { action: body.action, text: body.text, oldText: body.oldText }, { source: memorySource() });
@@ -10553,28 +11078,58 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
         const q = String(url.searchParams.get("q") ?? "").trim();
-        if (!q) return json(res, 400, { error: "q is required" });
+        // A recall by time needs no words: "what happened since yesterday"
+        // is the standup question, and it has no keyword.
+        const now = Date.now();
+        const sinceRaw = url.searchParams.get("since");
+        const untilRaw = url.searchParams.get("until");
+        const since = sinceRaw ? parseSince(sinceRaw, now) : null;
+        const until = untilRaw ? parseSince(untilRaw, now) : null;
+        if (sinceRaw && since === null) return json(res, 400, { error: "since must be a date, or a span like 24h, 3d, today, yesterday" });
+        if (untilRaw && until === null) return json(res, 400, { error: "until must be a date, or a span like 24h, 3d, today, yesterday" });
+        if (!q && since === null) return json(res, 400, { error: "q or since is required" });
+        const range = since !== null || until !== null
+          ? { ...(since !== null ? { since } : {}), ...(until !== null ? { until } : {}) }
+          : undefined;
         const rawLimit = Number(url.searchParams.get("limit"));
         const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.trunc(rawLimit), 25) : 12;
         // Memory files ride along by default: the bot's own notes are as
         // much its notebook as its transcripts, and scoped the same way —
-        // the caller's own bot, never another's.
+        // the caller's own bot, never another's. A recall by time alone
+        // has no words to match a file with.
         const scope = url.searchParams.get("scope") ?? "all";
         if (scope !== "all" && scope !== "conversations" && scope !== "memory") {
           return json(res, 400, { error: "scope must be all, conversations, or memory" });
         }
-        const memoryHits = scope === "conversations" ? [] : searchMemoryFiles(from.id, q, limit);
+        const memoryHits = scope === "conversations" || !q ? [] : searchMemoryFiles(from.id, q, limit);
         if (scope === "memory") return json(res, 200, { hits: [], memoryHits });
-        const ownThreads = [...new Set([from.threadId, ...(from.tasks ?? []).map((task) => task.threadId)])];
-        // A room is the only place a recall can be a disclosure: in a 1:1 the
-        // user already owns every thread the bot can reach.
+        // Own threads: the bot's main chat and tasks, and the rooms it is a
+        // member of with their tasks — conversations it already saw in full.
+        // Still own-bot: another bot's threads never enter this list.
+        const roomByThread = new Map<string, GroupRecord>();
+        for (const group of store.groups) {
+          if (!group.memberIds.includes(from.id)) continue;
+          roomByThread.set(group.threadId, group);
+          for (const task of group.tasks ?? []) roomByThread.set(task.threadId, group);
+        }
+        const ownThreads = [...new Set([from.threadId, ...(from.tasks ?? []).map((task) => task.threadId), ...roomByThread.keys()])];
+        // A room is the only place a recall can be a disclosure, and only a
+        // private chat is one: in a 1:1 the user already owns every thread
+        // the bot can reach, and a room's lines were said in the open.
         const inRoom = Boolean(store.groupByThread(fromThreadId));
-        const hits = recallMessages(q, ownThreads, limit).map((hit) => ({
-          ...hit,
-          task: store.taskByThread(from.id, hit.threadId)?.title,
-          current: hit.threadId === fromThreadId,
-          crossed: inRoom && hit.threadId !== fromThreadId,
-        }));
+        const found = q ? recallMessages(q, ownThreads, limit, range) : recentMessages(ownThreads, range ?? {}, limit);
+        const hits = found.map((hit) => {
+          const room = roomByThread.get(hit.threadId);
+          return {
+            ...hit,
+            task: room
+              ? (room.tasks ?? []).find((task) => task.threadId === hit.threadId)?.title
+              : store.taskByThread(from.id, hit.threadId)?.title,
+            ...(room ? { room: room.name } : {}),
+            current: hit.threadId === fromThreadId,
+            crossed: inRoom && !room && hit.threadId !== fromThreadId,
+          };
+        });
         if (inRoom) {
           discloseRecall(from, fromThreadId, hits.filter((hit) => hit.crossed).map((hit) => hit.threadId));
         }
@@ -11013,7 +11568,18 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             threadId: destination ? destination.id === source?.id ? address.threadId : destination.threadId : store.bot(botId)?.threadId ?? "", botId,
           }));
           for (const target of targets) {
-            const eligibility = target.botId === internalSender.id ? "Choose a teammate, not yourself" : roomHandoffProblem(target, address);
+            // roomHandoffProblem's "no longer exists" is written for a route
+            // that was valid and went away. Here the id is the model's own
+            // argument — usually a display name dropped into a bot_ids slot —
+            // so say which id failed and where the real ones are, instead of
+            // telling the model a teammate it can still reach is gone. Only
+            // the id the caller sent is echoed back, never a bot's name.
+            const addressed = store.bot(target.botId);
+            const eligibility =
+              target.botId === internalSender.id ? "Choose a teammate, not yourself"
+              : !addressed ? `No bot with id "${target.botId}" — call list_bots and copy the exact id from the result`
+              : addressed.hidden ? `The bot with id "${target.botId}" is no longer available — call list_bots for the ones you can reach`
+              : roomHandoffProblem(target, address);
             if (eligibility) return json(res, 403, { error: eligibility });
           }
           let approvalGranted = false;
@@ -11046,6 +11612,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
                 if (!resolved) throw new Error("The recipient no longer exists");
                 target.threadId = resolved.task.threadId;
                 if (resolved.created) createdThread = resolved.task.threadId;
+                if (delegatedFullAccess(internalSender, internalCapability.threadId, store.bot(target.botId)!)) {
+                  grantDelegatedFullAccess(internalSender, store.bot(target.botId)!, target.threadId);
+                }
               }
               const { node, duplicate } = roomHandoffs.enqueue(address, internalCapability.generation, internalCapability.roomHandoffId,
                 target, parsed.data.requestKey + ":" + target.botId, parsed.data.message, approvalGranted, parsed.data.rework, [...store.messagesFor(address.threadId)].reverse().find(m => m.role === "user" && m.kind === "text")?.text ?? "");
@@ -11306,6 +11875,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         const task = store.createTask(target.id, title, false, projectId, { botId: from.id, name: from.name, at: Date.now() });
         if (!task) return json(res, 500, { error: "couldn't create that thread" });
+        if (delegatedFullAccess(from, fromThreadId, target)) grantDelegatedFullAccess(from, target, task.threadId);
         const queued = queueDelegation(
           commsBus,
           from,
@@ -11579,8 +12149,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           // where the work is, and say which room it was.
           const roomTurn = activeGroupTurnForBot(bot.id);
           const target = blockedTarget({ ...bot, threadId: internalCapability.threadId }, roomTurn && { ...roomTurn.group, threadId: roomTurn.threadId });
+          const helpPlace = store.taskByThread(bot.id, internalCapability.threadId)?.surface ?? bot.computer;
+          const helpWhere = helpPlace && helpPlace !== "off" ? ` on ${surfaceLabel(helpPlace)}` : "";
           notify(
-            buildNotification("takeover", bot, target.threadId, snapshot.helpReason ?? "asked you to take over", {
+            buildNotification("takeover", bot, target.threadId, `${snapshot.helpReason ?? "asked you to take over"}${helpWhere}`, {
               group: target.group,
             }),
           );
@@ -11707,6 +12279,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
     if (path === "/api/routines" && method === "POST") {
       return json(res, 201, { routine: routines!.create(await readBody(req)) });
+    }
+    // The desktop shell polls this to decide whether to hold the computer
+    // awake: a run in flight, or a routine due within the hour.
+    if (path === "/api/routines/wake" && method === "GET") {
+      return json(res, 200, routines!.wakeHold());
     }
     let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
     if (routineMatch && method === "POST") {
@@ -11937,7 +12514,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (threadId === undefined &&
         (auth.kind === "session" || req.headers["x-openmausbot-companion"] === "1") &&
         store.tasks(botId).length > 1) {
-        throw Object.assign(new Error("This bot has multiple threads. Update this client and choose a thread before sending this action."), { status: 409 });
+        throw Object.assign(new Error("This bot has more than one thread. Update the Open Orgo Bot app on this device, then choose a thread and try again."), { status: 409 });
       }
     };
     if (method === "GET" && path === "/api/bots") {
@@ -13162,7 +13739,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const body = await readBody(req);
       if (body && typeof body === "object" && !Array.isArray(body)) {
         const unsupported = Object.keys(body).find(
-          (key) => key !== "instanceId" && key !== "model" && key !== "effort",
+          (key) => key !== "instanceId" && key !== "model" && key !== "effort" && key !== "variant",
         );
         if (unsupported) return json(res, 400, { error: `unsupported model field: ${unsupported}` });
       }
@@ -14274,7 +14851,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             // message intact for the next ordinary turn, where central image
             // admission can hand it to the provider natively.
             const carriesImages = extractTurnImages(text).images.length > 0;
-            if (!carriesImages && instance?.adapter.capabilities.queueing && instance.adapter.steer) {
+            if (!carriesImages && !computerSelectionTurns.get(threadId)?.selected && instance?.adapter.capabilities.queueing && instance.adapter.steer) {
               steered = await instance.adapter
                 .steer(threadId, promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"))
                 .catch(() => false);
@@ -14685,7 +15262,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "body must be a JSON object" });
       const current = store.projectBotForTask(m[1], m[2]);
       if (!current) return json(res, 404, { error: "no such task" });
-      const allowed = new Set(["title", "projectId", "modelSelection", "updateBotDefault", "resetApprovalToAsk", "approvalMode", "autoApprove", "requireAvailableModel", "pinnedMessageId", "acknowledgeLocalAuto", "archivedAt"]);
+      const allowed = new Set(["title", "projectId", "modelSelection", "updateBotDefault", "resetApprovalToAsk", "approvalMode", "autoApprove", "requireAvailableModel", "pinnedMessageId", "acknowledgeLocalAuto", "archivedAt", "surface"]);
       if (Object.keys(body).some((key) => !allowed.has(key))) return json(res, 400, { error: "unsupported thread setting" });
       for (const key of ["requireAvailableModel", "acknowledgeLocalAuto", "updateBotDefault", "resetApprovalToAsk"] as const) {
         if (body[key] !== undefined && typeof body[key] !== "boolean") return json(res, 400, { error: `${key} must be a boolean` });
@@ -14710,6 +15287,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (body.archivedAt === null) patch.archivedAt = undefined;
         else if (typeof body.archivedAt === "number" && Number.isFinite(body.archivedAt) && body.archivedAt >= 0) patch.archivedAt = body.archivedAt;
         else return json(res, 400, { error: "archivedAt must be a timestamp, or null to unarchive" });
+      }
+      if (body.surface !== undefined) {
+        if (threadBusy(current.id, current.threadId)) return json(res, 409, { error: "Stop this thread before changing its computer destination." });
+        // Where this conversation works, chosen from the composer. Null follows
+        // the bot's Works on again. Reachability is the turn's to judge.
+        if (body.surface === null) patch.surface = undefined;
+        else if (parseSurface(body.surface)) patch.surface = parseSurface(body.surface);
+        else return json(res, 400, { error: "surface must be cloud, vm, local, browser, or null to follow the bot" });
       }
       if (body.pinnedMessageId !== undefined) {
         if (body.pinnedMessageId === null || body.pinnedMessageId === "") patch.pinnedMessageId = undefined;
@@ -15106,7 +15691,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
 
     m = path.match(/^\/api\/bots\/([\w-]+)\/local-computer$/);
     if (m && method === "GET") {
-      const bot = store.bot(m[1]);
+      const bot = computerPreviewBot(m[1], url);
       if (!bot) return json(res, 404, { error: "no such bot" });
       return json(res, 200, await localVmPayload(localVmTargetForBot(bot.id)));
     }
@@ -15167,8 +15752,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/local-computer\/screenshot$/);
     if (m && method === "POST") {
-      const bot = store.bot(m[1]);
+      const bot = computerPreviewBot(m[1], url);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      if (url.searchParams.has("threadId") && await computerPreviewSurface(bot, bot.threadId) !== "vm") {
+        return json(res, 409, { error: "This conversation is not using the Local VM" });
+      }
       const target = localVmTargetForBot(bot.id);
       localVmIdleFor(target).touch();
       return json(res, 200, {
@@ -15569,7 +16157,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
     }
 
-    // ── custom MCP servers (stdio, local, secrets write-only) ──
+    // ── custom MCP servers (a local command or a URL; secrets write-only) ──
     if (method === "GET" && path === "/api/mcp/servers") {
       return json(res, 200, mcpServerResponse());
     }
@@ -15611,12 +16199,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (Object.keys(current).length >= MAX_MCP_SERVERS) {
           return json(res, 400, { error: `You can add at most ${MAX_MCP_SERVERS} MCP servers.` });
         }
-        const parsed = parseMcpServerMutation(name, {
-          command: body?.command,
-          args: body?.args,
-          env: body?.env,
-          enabled: body?.enabled,
-        });
+        const parsed = parseMcpServerMutation(name, mcpServerBody(body));
         if (!parsed.ok) return json(res, 400, { error: parsed.error });
         persistMcpServers({ ...current, [name]: parsed.server });
         return json(res, 201, mcpServerResponse());
@@ -15705,6 +16288,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const body = await readBody(req);
       const patch = parseConfigPatch(body);
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
+      const changingVoiceProvider = patch.tts?.provider !== undefined
+        && patch.tts.provider !== tts.voiceProvider(cfg);
+      if (changingVoiceProvider && patch.tts?.voice === undefined) {
+        // Voice ids are provider-owned opaque values. Never carry a default
+        // from one catalog into another. A caller may explicitly supply a
+        // voice for the newly selected provider in this same atomic patch.
+        patch.tts = { ...patch.tts, voice: "" };
+      }
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
       if (patch.browserProfiles !== undefined && body.expectedBrowserProfiles !== undefined) {
         const current = (cfg.browserProfiles ?? []).map(({ id, name }) => ({ id, name }));
@@ -15935,15 +16526,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         );
         if (resourceError) return json(res, 409, { error: resourceError });
       }
-      // same rule for a voice key — and check it against the provider the
-      // patch SELECTS, not the one already saved, or pasting a Cartesia key
-      // while switching from ElevenLabs validates against the wrong service
+      // Each cloud voice provider owns its own credential. Validate the field
+      // against that provider rather than whichever provider happens to be
+      // selected, so switching engines never sends one service another's key.
       const newTts = patch.tts;
-      // Chatterbox has no key at all — its credential is a local server
-      // address, and an ElevenLabs round trip would be the wrong test
-      const selectedVoiceProvider = newTts?.provider ?? cfg.tts?.provider ?? "elevenlabs";
-      if (newTts?.key?.trim() && selectedVoiceProvider !== "chatterbox") {
-        const check = await tts.verifyKey(newTts.key.trim());
+      if (newTts?.key?.trim()) {
+        const check = await tts.verifyKey("elevenlabs", newTts.key.trim());
+        if (!check.ok) return json(res, 400, { error: check.message });
+      }
+      if (newTts?.fishKey?.trim()) {
+        const check = await tts.verifyKey("fish", newTts.fishKey.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
       if (patch.browserProfiles !== undefined) {
@@ -15986,6 +16578,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       let configWriteCommitted = false;
       const externalSecretStorage = url.searchParams.get("secretStorage") === "external";
       try {
+        // Provider-owned voice ids must be invalidated before the provider
+        // commit. If bots.json cannot be written, leave the old provider in
+        // place rather than committing a new provider with stale bot voices.
+        // A later config-write failure may leave voices cleared, which is the
+        // safe side of this cross-file mutation: no foreign id can be spoken.
+        if (changingVoiceProvider) store.clearVoiceSelections();
         if (externalSecretStorage) {
           // The packaged Electron caller commits supplied credentials to the
           // OS-encrypted store before entering this route. Persist every
@@ -15998,6 +16596,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           if (persisted.orgo?.apiKey !== undefined) persisted.orgo.apiKey = "";
           if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";
           if (persisted.tts?.key !== undefined) persisted.tts.key = "";
+          if (persisted.tts?.fishKey !== undefined) persisted.tts.fishKey = "";
           if (persisted.imageGen?.key !== undefined) persisted.imageGen.key = "";
           if (persisted.imageGen?.customApiKey !== undefined) persisted.imageGen.customApiKey = "";
           saveConfig(persisted);
@@ -16342,23 +16941,26 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // ── the bot's cloud computer (Orgo) ──
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer$/);
     if (m && method === "GET") {
-      const bot = store.bot(m[1]);
+      const bot = computerPreviewBot(m[1], url);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      const surface = url.searchParams.has("threadId") ? await computerPreviewSurface(bot, bot.threadId) : "cloud";
+      if (surface !== "cloud") return json(res, 200, { surface, configured: false, backend: bot.cloudBackend === "vps" ? "vps" : "box" });
       const teamComputer = inheritedTeamComputer(bot);
       if (teamComputer) return json(res, 200, {
+        surface,
         backend: "orgo",
         teamComputer: { id: teamComputer.id, name: teamComputer.name, origin: teamComputer.origin, orgoComputerId: teamComputer.orgoComputerId },
         ...(await orgo.orgoStatus(cfg, teamComputerOwner(teamComputer.id), teamComputer.orgoComputerId)),
       });
       if (bot.cloudBackend === "vps") {
-        return json(res, 200, { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) });
+        return json(res, 200, { surface, backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) });
       }
       const status = await orgo.orgoStatus(cfg, bot.id, bot.orgoComputerId);
       if (bot.computer !== "cloud" || !status.configured || status.computer || bot.orgoComputerId) {
-        return json(res, 200, { backend: "orgo", ...status });
+        return json(res, 200, { surface, backend: "orgo", ...status });
       }
       const selection = await orgoSelectionRequirement(bot);
-      return json(res, 200, { backend: "orgo", ...status, ...selection });
+      return json(res, 200, { surface, backend: "orgo", ...status, ...selection });
     }
     // Who is driving this bot's computer. GET is the panel's initial read;
     // POST take/release/dismiss-help are the person's three moves. The bot
@@ -16413,7 +17015,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/viewer-close$/);
     if (m && method === "POST") {
-      const bot = store.bot(m[1]);
+      const bot = computerPreviewBot(m[1], url);
       if (!bot) return json(res, 404, { error: "no such bot" });
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
@@ -16423,8 +17025,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/(provision|join|sleep|exec|screenshot|remove)$/);
     if (m && method === "POST") {
       const botId = m[1];
-      const bot = store.bot(botId);
+      const previewOnly = m[2] === "screenshot" || m[2] === "join";
+      const bot = previewOnly ? computerPreviewBot(botId, url) : store.bot(botId);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      const threadPreview = previewOnly && url.searchParams.has("threadId");
+      if (threadPreview && await computerPreviewSurface(bot, bot.threadId) !== "cloud") {
+        return json(res, 409, { error: "This conversation is not using the cloud computer" });
+      }
       // Requiring JSON makes every computer mutation a non-simple browser
       // request (same reasoning as the Local VM lifecycle routes above): a
       // hostile page cannot submit it with a form, and its cross-origin JSON
@@ -16506,7 +17113,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           });
         }
       }
-      if (bot.computer !== "cloud") {
+      if (bot.computer !== "cloud" && !threadPreview) {
         return json(res, 409, {
           error: "Choose Cloud before changing or opening this Orgo. Auto only checks existing computer state.",
         });
@@ -16522,7 +17129,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             await assertOrgoCreationDoesNotBypassExistingComputers(bot);
             return json(res, 200, await orgo.provisionOrgo(cfg, botId, bot.name, bot.orgoComputerId));
           case "join":
-            return json(res, 200, await (activeOrgoTurn ? orgo.joinReadyOrgo(cfg, botId, bot.orgoComputerId) : orgo.joinOrgo(cfg, botId, bot.orgoComputerId)));
+            return json(res, 200, await (activeOrgoTurn || threadPreview ? orgo.joinReadyOrgo(cfg, botId, bot.orgoComputerId) : orgo.joinOrgo(cfg, botId, bot.orgoComputerId)));
           case "sleep":
             return json(res, 200, await orgo.sleepOrgo(cfg, botId, bot.orgoComputerId));
           case "exec":
