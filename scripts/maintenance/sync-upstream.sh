@@ -17,6 +17,13 @@ ORIGIN_SLUG="jbellsolutions/Open-Orgo-Bot"
 STATE_DIR="$HOME/Library/Application Support/open-orgo-bot-maintenance"
 LOG_DIR="$HOME/Library/Logs/open-orgo-bot/maintenance"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude || true)}"
+# Headless Claude authenticates with a long-lived token (`claude setup-token`)
+# kept in the login keychain, never in a file:
+#   security add-generic-password -U -s open-orgo-bot-maintenance -a claude -w
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password -s open-orgo-bot-maintenance -a claude -w 2>/dev/null || true)"
+  [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && export CLAUDE_CODE_OAUTH_TOKEN
+fi
 CLAUDE_BUDGET_USD="${OOB_CLAUDE_BUDGET_USD:-25}"
 DRY_RUN=0
 INSTALL=1
