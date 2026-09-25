@@ -1,9 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import { isActiveTurnRefusal, isRemoteScreenshotContention, remoteScreenshotSource } from "@/lib/remote-desktop";
+import { cloudRunner, isActiveTurnRefusal, isRemoteScreenshotContention, remoteScreenshotSource } from "@/lib/remote-desktop";
+import type { InstanceInfo } from "@/state/store";
 import { CLOUD_COMPUTER_BUSY_ERROR } from "../../shared/computer-contention";
 
 describe("remote VPS preview", () => {
+  it("uses the selected bot's own computer-capable engine, never an unrelated one", () => {
+    const plain = { instanceId: "plain", driverKind: "claude", snapshot: { state: "available" } } as InstanceInfo;
+    const bridge = { ...plain, instanceId: "bridge", driverKind: "openai-compat", capabilities: { cloudComputerMcp: true } } as InstanceInfo;
+    const cli = { ...plain, instanceId: "cli", driverKind: "codex", capabilities: { computerMcp: true } } as InstanceInfo;
+    expect(cloudRunner([plain, bridge, cli], "plain")).toBeUndefined();
+    expect(cloudRunner([plain, bridge, cli], "bridge")).toBe(bridge);
+    expect(cloudRunner([plain, bridge, cli], "cli")).toBe(cli);
+    expect(cloudRunner([plain, { ...bridge, snapshot: { state: "unavailable" } }, cli], "bridge")?.snapshot.state).toBe("unavailable");
+    expect(cloudRunner([plain, bridge, cli])).toBeUndefined();
+  });
   it("retries only known transient contention, not permanent 409 failures", () => {
     expect(isRemoteScreenshotContention({ status: 409, message: "this bot's cloud computer is being changed — wait for it to finish" })).toBe(true);
     expect(isRemoteScreenshotContention({ status: 409, message: "the VPS is being prepared — try again shortly" })).toBe(true);

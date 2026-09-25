@@ -82,6 +82,28 @@ still require an answer. A Chief or
 teammate can delegate work to this bot without downgrading its explicit Auto
 (full access) grant. It does not enable Auto on any other bot.
 
+## Asking you questions
+
+Every engine can stop and ask, and no approval level ever answers a question
+for you: Ask, Auto-accept edits, Auto, and Full access all leave a question
+card for a person. What differs per engine is only how the ask travels:
+
+| Engine family | How an ask travels | Multiple questions at once |
+| --- | --- | --- |
+| Claude Code | Structured round-trip (its own `AskUserQuestion`) | Yes — capped at 4 by the CLI |
+| Codex | Structured round-trip | Yes — up to 6 |
+| Grok Build, Minimax, OpenAI-compatible endpoints | The injected `ask_user` tool | Yes — up to 6 |
+| ACP engines (Cursor, Antigravity, Gemini CLI, Qwen Code, OpenCode, …) | Option-match round-trip on the ACP permission request | One at a time — the request carries one choice set |
+| Pi | Free-text round-trip over `extension_ui_request` | One at a time |
+| BoxAgent (cloud computer) | A fenced `omb-ask` block in the run's final output; the turn stays open until you answer or the ask times out | Yes — up to 6 |
+
+A question the harness parsed out of model-authored output rather than a
+real tool call — the BoxAgent transport — carries an "Agent-composed
+question" badge on the card, and the decision log records it with
+`origin: output`. Flat clients (notifications, older companion builds)
+see plain buttons only when a card asks a single choice question; a
+multi-question card renders its structured form on current apps instead.
+
 ## Provider mappings
 
 | Provider | Ask | Auto-accept edits | Auto | Full access |
@@ -92,6 +114,8 @@ teammate can delegate work to this bot without downgrading its explicit Auto
 | Antigravity | Native `default` | Native `auto_edit` | Legacy `auto` behaves as Ask; UI Auto selects Full access | Native `yolo` plus automatic approval of remaining tool-permission requests; shown as Auto |
 | Grok Build | Native `default` | Native `acceptEdits` | Native `--permission-mode auto`; availability of Grok's reviewer depends on its feature rollout | Native `bypassPermissions` plus automatic approval of remaining tool-permission requests |
 | OpenCode | Ask | not offered | Ask | Approve individual ACP permission requests, never task questions |
+| Qwen Code | Native `default` | Native `--approval-mode auto-edit` | Native `--approval-mode auto` (Qwen's LLM classifier approves safe actions, blocks risky ones) | `--yolo`, plus automatic approval of remaining ACP permission requests |
+| Gemini CLI | Native `default` | Native `--approval-mode auto_edit` | Ask (no reviewer) | `--yolo`, plus automatic approval of remaining ACP permission requests |
 | Other/custom engines | Ask | not offered | Ask | Not offered until a provider mapping is implemented |
 
 These settings apply on each turn, including resumed conversations. Switching

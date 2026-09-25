@@ -36,9 +36,30 @@ If a protected behavior cannot be proven safe, leave the primary branch and
 installed application untouched and open a review issue describing the exact
 upstream version, conflicts, failed checks, and affected files.
 
-## Automated monitoring
+## Keeping the fork thin
+
+Every line the fork changes in an upstream file is a future merge conflict.
+Prefer adding new files over editing upstream ones, keep upstream internal
+names (`OPENMAUSBOT_*` env vars, `@openmausbot/*` packages, protocol message
+types) untouched, and list whole paths the fork removes in
+`.fork/deleted-paths.txt` so modify/delete conflicts resolve mechanically.
+`node scripts/check-fork-invariants.mjs` enforces the checkable invariants.
+
+## Automated monitoring and sync
 
 `.github/workflows/upstream-watch.yml` checks daily for a newer stable release
 and opens one deduplicated issue. It never merges or executes upstream code.
-The local maintainer automation performs the isolated integration and closes
-the issue only after verification succeeds.
+
+On the maintainer's Mac, the LaunchAgent `ai.openorgobot.maintenance`
+(`scripts/maintenance/ai.openorgobot.maintenance.plist`) runs
+`scripts/maintenance/sync-upstream.sh` Monday, Wednesday and Friday. It merges
+the latest stable upstream release in a disposable `.ai-worktrees/` worktree,
+resolves fork-deleted paths mechanically, asks headless Claude to resolve any
+remaining conflicts under [`fork-merge-rules.md`](fork-merge-rules.md), then
+re-runs every gate itself (fork invariants, locale check, lint, typecheck, full
+test suite). Only a green result is committed, pushed to `main`, and installed
+through `scripts/maintenance/install-app.sh` (idle-gated swap, backup, health
+check, automatic rollback). A red result leaves `main` and the installed app
+untouched and comments on the upstream-watch issue. The same run reports new
+Orgo SDK / korgo-bot / orgo-mcp and Hermes releases for manual review.
+Logs: `~/Library/Logs/open-orgo-bot/maintenance/`.

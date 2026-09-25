@@ -160,4 +160,11 @@ describe("Orgo provider errors", () => {
       .toContain("selected Orgo workspace");
     expect(orgoErrorMessage(403, "computer creation", { message: "Forbidden" })).toContain("account permissions");
   });
+
+  it("surfaces the provider's own 429 message instead of a generic one", async () => {
+    const { orgoErrorMessage } = await import("./orgo.ts");
+    expect(orgoErrorMessage(429, "computer creation", { message: "Fixture account is rate-limited. Retry this computer." }))
+      .toBe("Fixture account is rate-limited. Retry this computer.");
+    expect(orgoErrorMessage(429, "computer creation", {})).toBe("Orgo is rate-limiting this account — wait a moment and retry");
+  });
 });

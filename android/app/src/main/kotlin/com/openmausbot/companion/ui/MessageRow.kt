@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openmausbot.companion.core.Chat
 import com.openmausbot.companion.core.AttachedMessageContent
+import com.openmausbot.companion.core.generatedImages
 import com.openmausbot.companion.core.DisplayedMessageAttachment
 import com.openmausbot.companion.core.DownloadedFile
 import com.openmausbot.companion.core.Message
@@ -87,6 +88,7 @@ import com.openmausbot.companion.core.ThreadRef
 import com.openmausbot.companion.core.ToolActivity
 import com.openmausbot.companion.core.TranscriptCard
 import com.openmausbot.companion.core.TranscriptCards
+import com.openmausbot.companion.core.webhookContent
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -128,6 +130,10 @@ fun MessageRow(
     val bot = (chat as? Chat.BotChat)?.bot
     val versions = remember(state, message.id) { state.versions(message, chat.threadId) }
     val versionIndex = versions.indexOfFirst { it.id == message.id }
+    // The stand-in for an edit the computer has not answered yet. It has no
+    // server identity, so nothing may react to it or edit it again.
+    val editPending = state.pendingEdits[chat.threadId]
+    val isPendingEdit = editPending?.placeholderId == message.id
     val mine = message.role == Message.Role.USER
 
     Box(
@@ -241,7 +247,7 @@ fun MessageRow(
         }
 
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+            if (!isPendingEdit) Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 Reactions.CHOICES.forEach { emoji ->
                     Text(
                         text = emoji,
@@ -280,11 +286,11 @@ fun MessageRow(
             // Attachment messages cannot be reconstructed by a text-only edit.
             // The policy also keeps their private transport paths out of the UI.
             val editableText = MessageActions.editableText(message)
-            if (editableText != null && bot != null) {
+            if (editableText != null && bot != null && !isPendingEdit) {
                 HorizontalDivider()
                 DropdownMenuItem(
                     text = { Text("Edit and retry") },
-                    enabled = bot.busy != true,
+                    enabled = bot.busy != true && editPending == null,
                     onClick = {
                         menuOpen = false
                         editText = editableText
@@ -406,7 +412,14 @@ private fun MessageContent(
             CardView(chat, message, haptics)
         }
         Message.Kind.ACTIVITY -> ActivityChip(message.tool, message.threadRef, openThread)
+        Message.Kind.COMPACTION -> ReceiptChip(
+            label = message.compaction?.chipText ?: message.text.orEmpty(),
+            detail = message.compaction?.summary ?: message.text.orEmpty(),
+        )
         Message.Kind.SCREEN -> ScreenShot(chat.threadId, message)
+        // Turn-audit chip (tool list + reply preview). Desktop shows it only
+        // behind a "show tool calls" setting Android doesn't have; hide it.
+        Message.Kind.DIGEST -> {}
         // A message kind from a newer computer. Almost everything the harness
         // sends carries `text`, so showing it is usually the whole message and
         // always better than a gap in the transcript. When there is nothing to
@@ -435,6 +448,7 @@ private fun TextBubble(
     // Shared attachments are protocol tags in stored user text. They are not
     // prose, and a server-controlled path must never be presented as a link.
     val attached = remember(message.id, message.text) { AttachedMessageContent.parse(message.text.orEmpty()) }
+    val webhook = remember(message) { message.webhookContent }
     // A card brings its own surface, so it drops the bubble — and with it the
     // tail, which is a bubble's chin and not a card's.
     val bubble = card == null
@@ -480,6 +494,9 @@ private fun TextBubble(
                     )
                 }
             }
+            message.generatedImages.forEach { attachment ->
+                SharedAttachmentView(threadId, message, attachment, openAttachment)
+            }
             // Bots get markdown, you do not — the same split the desktop makes.
             // Markdown you did not intend is worse than markdown you did: a
             // message about `**` should show the asterisks.
@@ -489,7 +506,9 @@ private fun TextBubble(
             when (card) {
                 is TranscriptCard.Diff -> DiffCard(card)
                 is TranscriptCard.Table -> DataTableCard(card)
-                null -> if (mine) {
+                null -> if (webhook != null) {
+                    WebhookMessageBody(webhook)
+                } else if (mine) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         attached.attachments.forEach { attachment ->
                             SharedAttachmentView(
@@ -575,6 +594,7 @@ private fun SharedImageAttachment(
     attachment: DisplayedMessageAttachment,
     onOpen: ((DisplayedMessageAttachment, Message, DownloadedFile?) -> Unit)?,
 ) {
+    val foreground = if (message.role == Message.Role.USER) BubbleColor.mineText else MaterialTheme.colorScheme.onSurface
     val session = LocalCompanion.current.session
     var attempt by remember(message.id, attachment.path) { mutableStateOf(0) }
     var state by remember(message.id, attachment.path) {
@@ -607,7 +627,7 @@ private fun SharedImageAttachment(
         modifier = Modifier
             .widthIn(max = 360.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(BubbleColor.mineText.copy(alpha = 0.10f))
+            .background(foreground.copy(alpha = 0.10f))
             .clickable(enabled = ready != null && onOpen != null, role = Role.Button) {
                 ready?.let { onOpen?.invoke(attachment, message, it.file) }
             }
@@ -624,6 +644,7 @@ private fun SharedImageAttachment(
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 AttachmentThumbnailState.Failed -> AttachmentLoadFailure(
                     label = "Image unavailable",
+                    foreground = foreground,
                     onRetry = { attempt += 1 },
                 )
                 is AttachmentThumbnailState.Ready -> Image(
@@ -638,7 +659,7 @@ private fun SharedImageAttachment(
             attachment.name,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
-            color = BubbleColor.mineText,
+            color = foreground,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
@@ -647,15 +668,15 @@ private fun SharedImageAttachment(
 }
 
 @Composable
-private fun AttachmentLoadFailure(label: String, onRetry: () -> Unit) {
+private fun AttachmentLoadFailure(label: String, foreground: Color = BubbleColor.mineText, onRetry: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Icon(
             imageVector = Icons.Filled.Warning,
             contentDescription = null,
-            tint = BubbleColor.mineText.copy(alpha = 0.70f),
+            tint = foreground.copy(alpha = 0.70f),
             modifier = Modifier.size(20.dp),
         )
-        Text(label, fontSize = 13.sp, color = BubbleColor.mineText.copy(alpha = 0.80f))
+        Text(label, fontSize = 13.sp, color = foreground.copy(alpha = 0.80f))
         TextButton(onClick = onRetry) { Text("Retry") }
     }
 }
@@ -739,6 +760,44 @@ private fun ActivityChip(
                 maxLines = 1,
                 color = tint,
             )
+        }
+    }
+}
+
+/**
+ * A quiet chip under a reply for the harness's receipts (the work digest, a
+ * compaction record): one line, and the full text on tap. Port of
+ * `ReceiptChip` in `ios/App/ChatView.swift`.
+ */
+@Composable
+private fun ReceiptChip(label: String, detail: String) {
+    if (label.isEmpty()) return
+    var expanded by remember(label) { mutableStateOf(false) }
+    val haptics = rememberHaptics()
+    Column(
+        modifier = Modifier
+            .padding(start = 4.dp)
+            .heightIn(min = MIN_TOUCH_TARGET)
+            .clickable(role = Role.Button) {
+                haptics.play(TactileAction.TOGGLE_ACTIVITY_RUN)
+                expanded = !expanded
+            }
+            .semantics(mergeDescendants = true) { contentDescription = label },
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(ACTIVITY_DOT)
+                    .background(secondaryTint, CircleShape),
+            )
+            Text(text = label, fontSize = 13.sp, maxLines = 1, color = secondaryTint)
+        }
+        if (expanded && detail.isNotEmpty() && detail != label) {
+            Text(text = detail, fontSize = 12.sp, color = secondaryTint)
         }
     }
 }

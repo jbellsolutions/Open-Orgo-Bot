@@ -1,3 +1,4 @@
+import { cloudRunner } from "@/lib/remote-desktop";
 // The bot's computer, in the right-side slot. Where it runs decides the
 // whole flow: explicit cloud → provision the orgo on open (idempotent) and preview
 // via SSE frames or a ~4s screenshot poll. macOS local mode keeps the legacy
@@ -30,7 +31,7 @@ import {
 } from "lucide-react";
 import { api, ApiError, currentTaskBot, useStore, type Bot } from "@/state/store";
 import { effectivePlace, isComputerPlace, placeLabelKey } from "@/lib/place";
-import type { CloudBackend } from "../../server/contracts.ts";
+import type { CloudBackend } from "../../shared/wire";
 import { ApiKeyRow } from "./ApiKeys";
 import { cn } from "@/lib/cn";
 import { useCaptionChrome } from "@/components/DesktopCapabilities";
@@ -146,6 +147,7 @@ const PANEL_WIDTH_KEY = "omb-computer-panel-width";
 const PANEL_MIN_WIDTH = 360;
 const PANEL_MAX_WIDTH = 960;
 const PANEL_DEFAULT_WIDTH = 400;
+const PANEL_RESIZE_STEP = 40;
 
 function readPanelWidth(): number {
   try {
@@ -170,6 +172,13 @@ export function ComputerPanel({
   // makes it wide enough to actually read a page in the Browser tab.
   const [panelWidth, setPanelWidth] = useState(readPanelWidth);
   const resizeFrom = useRef<{ x: number; width: number } | null>(null);
+  const persistPanelWidth = (width: number) => {
+    try {
+      localStorage.setItem(PANEL_WIDTH_KEY, String(width));
+    } catch {
+      /* storage blocked — width lives for this session */
+    }
+  };
   const onResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
     resizeFrom.current = { x: event.clientX, width: panelWidth };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -183,11 +192,36 @@ export function ComputerPanel({
     if (!resizeFrom.current) return;
     resizeFrom.current = null;
     event.currentTarget.releasePointerCapture(event.pointerId);
-    try {
-      localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth));
-    } catch {
-      /* storage blocked — width lives for this session */
-    }
+    persistPanelWidth(panelWidth);
+  };
+  /** Keyboard resize: the same clamp and stored preference the pointer flow
+   * uses, so arrow-key changes stay in React state like a drag would. */
+  const onResizeBy = (delta: number) => {
+    setPanelWidth((current) => {
+      const next = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, current + delta));
+      persistPanelWidth(next);
+      return next;
+    });
+  };
+  const separatorRef = useRef<HTMLDivElement>(null);
+  const [separatorWidth, setSeparatorWidth] = useState<number | null>(null);
+  useEffect(() => {
+    // The width state lives with the panel; mirror the styled panel only
+    // so the slider semantics stay truthful for assistive tech.
+    const panel = separatorRef.current?.closest("aside");
+    if (!panel) return;
+    const read = () => setSeparatorWidth(panel.offsetWidth);
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, []);
+  const onSeparatorKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const widen = event.key === "ArrowLeft" ? PANEL_RESIZE_STEP : event.key === "ArrowRight" ? -PANEL_RESIZE_STEP : null;
+    if (widen === null || separatorWidth === null) return;
+    event.preventDefault();
+    onResizeBy(widen);
   };
   const { state, dispatch, flushBotPatches } = useStore();
   // Where this bot's current conversation works and whether a turn is acting
@@ -428,13 +462,13 @@ export function ComputerPanel({
   const vpsSupported = Boolean(computerToolSupported);
   const cloudSupported = cloudBackend === "vps"
     ? vpsSupported
-    : computerToolSupported;
+    : Boolean(cloudRunner(state.instances, bot.modelSelection.instanceId));
   const botRoutines = state.routines
     .filter((routine) => routine.botId === bot.id)
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (a.nextRunAt ?? Infinity) - (b.nextRunAt ?? Infinity));
   const cloudRoutineReady = Boolean(
     state.config?.orgo.configured &&
-      state.instances.some((instance) => instance.capabilities?.computerMcp && instance.snapshot.state === "available"),
+      cloudRunner(state.instances, bot.modelSelection.instanceId)?.snapshot.state === "available",
   );
   const activeRoutineRun = state.routineRuns.find(
     (run) => run.botId === bot.id && ["queued", "running", "waiting"].includes(run.status),
@@ -863,16 +897,34 @@ export function ComputerPanel({
     if (panelView !== "computer" || phase !== "vm" || !computerStatusCurrent || viewerOpen || !pageVisible) return;
     const controller = new AbortController();
     let inFlight = false;
+    let lastAttemptAt = -Infinity;
+    let retryDelay: number | null = null;
+    let initialAttempt = true;
     const shoot = async () => {
       if (inFlight || controller.signal.aborted) return;
+      if (Date.now() - lastAttemptAt < (retryDelay ?? (bot.busy ? 3000 : 30_000))) return;
       inFlight = true;
+      retryDelay = null;
       try {
         const { image } = await api(threadPath("local-computer/screenshot"), { method: "POST", signal: controller.signal });
-        if (!controller.signal.aborted && typeof image === "string") setVmFrame(image);
+        if (!controller.signal.aborted && typeof image === "string") {
+          setVmFrame(image);
+          setPreviewError(null);
+        }
       } catch (e) {
-        if (!controller.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+        // The first miss leaves the pane with nothing to show, so it stays a
+        // panel error. Later transient misses are the preview's own retry
+        // business — they keep the last frame, back off, and never rewrite
+        // the panel banner every tick.
+        if (!controller.signal.aborted) {
+          retryDelay = 5000;
+          if (initialAttempt) setError(e instanceof Error ? e.message : String(e));
+          else setPreviewError(e instanceof Error ? e : new LocalizedPanelError("computer.err.screenUnavailable"));
+        }
       } finally {
         inFlight = false;
+        initialAttempt = false;
+        lastAttemptAt = Date.now();
       }
     };
     void shoot();
@@ -881,7 +933,7 @@ export function ComputerPanel({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [panelView, phase, computerStatusCurrent, threadPath, viewerOpen, pageVisible, bot.busy]);
+  }, [panelView, phase, computerStatusCurrent, threadPath, viewerOpen, pageVisible, bot.busy, setError, setPreviewError, setVmFrame]);
 
   // local preview: frames from the Electron main process. The FIRST capture
   // attempt is what makes macOS show the Screen Recording prompt (there is
@@ -1072,6 +1124,9 @@ export function ComputerPanel({
           setResolvedComputerSelection(null);
           setOrgoState(cloudBackend === "vps" ? "stopped" : "archived");
           if (cloudBackend === "vps") setPhase("vps-stopped");
+          // The deciders map an archived Orgo computer to the sleeping observation
+          // phase; re-resolving would see "ensure-orgo" and wake it again.
+          else setPhase("show-sleeping-orgo");
         }
       })
       .catch((e) => {
@@ -1183,14 +1238,20 @@ export function ComputerPanel({
       style={{ width: panelWidth }}
     >
       <div
+        ref={separatorRef}
         role="separator"
         aria-orientation="vertical"
         aria-label={t("computer.resizeAria")}
+        aria-valuemin={PANEL_MIN_WIDTH}
+        aria-valuemax={PANEL_MAX_WIDTH}
+        aria-valuenow={separatorWidth ?? undefined}
+        tabIndex={0}
+        onKeyDown={onSeparatorKeyDown}
         onPointerDown={onResizeStart}
         onPointerMove={onResizeMove}
         onPointerUp={onResizeEnd}
         onPointerCancel={onResizeEnd}
-        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent/40"
+        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent/40 focus-visible:bg-accent/60"
       />
       {/* Header */}
       <div className={cn("flex items-center justify-between px-4 py-3", padClass)}>
@@ -1652,12 +1713,16 @@ export function ComputerPanel({
               ["off", "vm.dest.off", "computer.dest.offDesc", Power],
             ] as const).map(([mode, labelKey, descriptionKey, Icon]) => {
                 const selected = mode === null ? !profileBot.computer : profileBot.computer === mode;
-                const disabled =
+                // A place the enrolled organisation disallows is not offered.
+                const managedPolicy = state.config?.managedPolicy;
+                const managedKind = mode === "local" ? "thisComputer" : mode === "vm" ? "localVm" : mode === "cloud" ? (profileBot.cloudBackend === "vps" ? "vps" : "box") : null;
+                const managedBy = managedPolicy && managedKind && !managedPolicy.computers[managedKind] ? t("policy.managedBy", { organization: managedPolicy.organizationName }) : undefined;
+                const disabled = Boolean(managedBy) ||
                   (mode === "cloud" && !cloudSupported) ||
                   (mode === "vm" && !vmSupported) ||
                   (mode === "local" && !localSelectable) ||
                   (mode === "browser" && !browserSelectable);
-                const unavailableTitle =
+                const unavailableTitle = managedBy ?? (
                   mode === "vm" && !vmSupported
                     ? t("computer.unavailableVm")
                     : mode === "cloud" && !cloudSupported
@@ -1666,7 +1731,7 @@ export function ComputerPanel({
                         ? localDisabledReason ?? t("computer.unavailableLocal")
                         : mode === "browser"
                           ? browserSelectable ? t("computer.browserOnlyTitle") : browserDisabledReason
-                          : undefined;
+                          : undefined);
                 return (
               <button
                 key={mode ?? "auto"}
@@ -1699,7 +1764,7 @@ export function ComputerPanel({
                   <span>{t(labelKey)}</span>
                 </span>
                 <span className="mt-1.5 block text-[11px] leading-4 text-ink-secondary">
-                  {disabled ? t("computer.unavailableHere") : t(descriptionKey)}
+                  {managedBy ?? (disabled ? t("computer.unavailableHere") : t(descriptionKey))}
                 </span>
               </button>
                 );

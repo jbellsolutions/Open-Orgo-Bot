@@ -1,0 +1,12 @@
+# Paths Open Orgo Bot deliberately removes from upstream OpenMausBot.
+# scripts/maintenance/sync-upstream.sh resolves modify/delete conflicts on
+# these paths by keeping them deleted, and scripts/check-fork-invariants.mjs
+# fails if any of them reappear. Globs use shell pattern syntax.
+enterprise/*
+server/box.ts
+server/box-*.ts
+server/drivers/boxagent.ts
+server/drivers/boxagent.test.ts
+server/drivers/chat-box-tools.ts
+server/drivers/chat-box-tools.test.ts
+server/openai-box.e2e.test.ts

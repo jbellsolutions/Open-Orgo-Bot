@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppState, Bot, InstanceInfo } from "@/state/store";
-import type { EffortLevel } from "../../server/contracts.ts";
+import type { EffortLevel } from "../../shared/wire";
 
 // The picker reads the engine catalog off the store, and the store module
 // touches window/localStorage at import time — the same shape
@@ -307,6 +307,18 @@ describe("Claude provider and account selection", () => {
     }
   });
 
+  it("shows the icon of the concrete Claude account the rail selects", () => {
+    const personalIcon: InstanceInfo = { ...personal, icon: { kind: "preset", preset: "anthropic" } };
+    const workIcon: InstanceInfo = { ...work, icon: { kind: "preset", preset: "azure" } };
+    for (const claudeInstance of [workIcon, undefined]) {
+      const target = claudeInstance ?? personalIcon;
+      const rail = ModelEngineRail({ instances: [personalIcon, workIcon], claudeInstance, onSelect: () => {} });
+      const button = Children.toArray(rail.props.children).find((child) => (child as ReactElement).type === "button") as ReactElement<{ children: ReactNode }>;
+      const mark = Children.toArray(button.props.children)[0] as ReactElement<{ instance: InstanceInfo }>;
+      expect(mark.props.instance).toBe(target);
+    }
+  });
+
   it("maps named native options to concrete instances without committing a model", () => {
     const onSelect = vi.fn();
     const dropdown = ClaudeAccountSelect({ accounts: [personal, work], selectedId: work.instanceId, onSelect });
@@ -317,5 +329,16 @@ describe("Claude provider and account selection", () => {
     const select = Children.toArray(dropdown.props.children)[1] as ReactElement<{ onChange: (event: ChangeEvent<HTMLSelectElement>) => void }>;
     select.props.onChange({ target: { value: personal.instanceId } } as ChangeEvent<HTMLSelectElement>);
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(personal);
+  });
+});
+
+describe("organisation policy", () => {
+  it("shows an engine the organisation disallows as managed and dimmed, not hidden", () => {
+    const blocked: InstanceInfo = { ...engine(), policy: { organizationName: "Fixture Agency", reason: "Fixture Agency allows only company models on this computer. Choose a Company model for this bot." } };
+    const markup = renderToStaticMarkup(createElement(ModelEngineRail, { instances: [blocked], onSelect: () => {} }));
+    expect(markup).toContain('aria-label="Codex · Managed by Fixture Agency"');
+    expect(markup).toContain("opacity-40");
+    const allowed = renderToStaticMarkup(createElement(ModelEngineRail, { instances: [engine()], onSelect: () => {} }));
+    expect(allowed).not.toContain("Managed by");
   });
 });

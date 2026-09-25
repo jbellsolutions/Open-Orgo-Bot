@@ -17,9 +17,11 @@ import { customMcpServers,
   parseConfigPatch,
   parseStoredConfig,
   persistableInstanceConfigs,
+  roomHandoffLimits,
   roomTurnTimeoutMinutes,
   maxConcurrentBotThreads,
   threadEventLogMaxBytes,
+  threadEventLogRetentionDays,
   showToolCallsEnabled,
   saveConfig,
   skillAuthoringEnabled,
@@ -29,15 +31,37 @@ import { customMcpServers,
   browserProfilePartitionTarget,
   browserProfileReplacementConflict,
   browserProfileRoutingConflict,
+  stripControlPlaneEnv,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
   vpsSshAlias,
+  browserEngineAttachCdpUrl,
   withInstanceCli,
   WORKSPACE_CREDENTIAL_ENV,
   type AppConfig,
 } from "./config.ts";
 
 describe("configuration boundaries", () => {
+  it("accepts shared user context, including clearing, without reloading providers", () => {
+    const profile = { aboutMe: "I prefer short answers.\nMy time zone is Europe/Berlin." };
+    expect(parseConfigPatch({ profile })).toEqual({ profile });
+    expect(parseStoredConfig({ profile })).toEqual({ profile });
+    expect(parseConfigPatch({ profile: { aboutMe: "" } })).toEqual({ profile: { aboutMe: "" } });
+    expect(providerReloadKeys({ profile })).toEqual([]);
+    expect(() => parseConfigPatch({ profile: { aboutMe: "x".repeat(24_001) } })).toThrow();
+  });
+  it("validates context budgets and keeps changes independent of provider reload", () => {
+    const context = { autoCompact: false, compactAt: 0.7, rebuildBytes: 32_000 };
+    expect(parseStoredConfig({ context })).toEqual({ context });
+    expect(parseConfigPatch({ context })).toEqual({ context });
+    expect(providerReloadKeys({ context })).toEqual([]);
+    for (const value of [0, -1, "10", null, Infinity]) {
+      expect(() => parseConfigPatch({ context: { compactAt: value } })).toThrow();
+    }
+    for (const value of [512, 1_024.1, 1_000_001]) {
+      expect(() => parseConfigPatch({ context: { rebuildBytes: value } })).toThrow();
+    }
+  });
   it("keeps Fish Audio and ElevenLabs voice credentials separate", () => {
     const parsed = parseConfigPatch({
       tts: { provider: "fish", key: "eleven-key", fishKey: "fish-key", voice: "fish-voice" },
@@ -65,8 +89,24 @@ describe("configuration boundaries", () => {
     expect(threadEventLogMaxBytes({ threads: { maxConcurrentPerBot: 3 } })).toBeNull();
     const parsed = parseStoredConfig({ threads: { maxConcurrentPerBot: 3, eventLogMaxBytes: 50 * 1024 * 1024 } });
     expect(threadEventLogMaxBytes(parsed)).toBe(50 * 1024 * 1024);
-    for (const value of [0, -1, 256 * 1024 - 1, 1.5, "1000", null]) {
+    // the knob patches on its own and null is the explicit clear marker
+    expect(parseConfigPatch({ threads: { eventLogMaxBytes: 50 * 1024 * 1024 } })).toEqual({ threads: { eventLogMaxBytes: 50 * 1024 * 1024 } });
+    expect(parseConfigPatch({ threads: { eventLogMaxBytes: null } })).toEqual({ threads: { eventLogMaxBytes: null } });
+    for (const value of [0, -1, 256 * 1024 - 1, 1.5, "1000"]) {
       expect(() => parseConfigPatch({ threads: { maxConcurrentPerBot: 3, eventLogMaxBytes: value } })).toThrow("threads.eventLogMaxBytes");
+    }
+  });
+
+  it("keeps thread event logs forever unless a retention window is configured", () => {
+    expect(threadEventLogRetentionDays({})).toBeNull();
+    expect(threadEventLogRetentionDays(parseStoredConfig({ threads: { maxConcurrentPerBot: 2 } }))).toBeNull();
+    const configured = parseStoredConfig({ threads: { maxConcurrentPerBot: 2, eventLogRetentionDays: 30 } });
+    expect(threadEventLogRetentionDays(configured)).toBe(30);
+    // the knob patches on its own and null is the explicit clear marker
+    expect(parseConfigPatch({ threads: { eventLogRetentionDays: 30 } })).toEqual({ threads: { eventLogRetentionDays: 30 } });
+    expect(parseConfigPatch({ threads: { eventLogRetentionDays: null } })).toEqual({ threads: { eventLogRetentionDays: null } });
+    for (const value of [0, -1, 1.5, "30", 3660]) {
+      expect(() => parseConfigPatch({ threads: { maxConcurrentPerBot: 2, eventLogRetentionDays: value } })).toThrow("threads.eventLogRetentionDays");
     }
   });
 
@@ -117,6 +157,14 @@ describe("configuration boundaries", () => {
     expect(parseConfigPatch(input)).toEqual(expected);
   });
 
+  it("accepts a new-bot effort default and clears it with null", () => {
+    expect(parseStoredConfig({ newBots: { effort: "medium" } })).toEqual({ newBots: { effort: "medium" } });
+    expect(parseConfigPatch({ newBots: { effort: "medium" } })).toEqual({ newBots: { effort: "medium" } });
+    expect(parseConfigPatch({ newBots: { effort: null } })).toEqual({ newBots: { effort: null } });
+    expect(() => parseConfigPatch({ newBots: { effort: "turbo" } })).toThrow("newBots");
+    expect(() => parseConfigPatch({ newBots: { approvalMode: "full" } })).toThrow("newBots");
+  });
+
   it("round-trips an opaque model variant without converting omission to none", () => {
     const defaultModelSelection = { instanceId: "opencodeGo", model: "provider/model", variant: "minimal" };
     expect(parseConfigPatch({ defaultModelSelection })).toEqual({ defaultModelSelection });
@@ -140,6 +188,20 @@ describe("configuration boundaries", () => {
   ])("rejects an invalid default model selection: %j", (defaultModelSelection) => {
     expect(() => parseStoredConfig({ defaultModelSelection })).toThrow("defaultModelSelection");
     expect(() => parseConfigPatch({ defaultModelSelection })).toThrow("defaultModelSelection");
+  });
+
+  it("exposes room handoff lifetime limits from config with the current defaults", () => {
+    const configured = parseStoredConfig({
+      rooms: { turnTimeoutMinutes: 20, handoffLifetimeMinutes: 60, handoffMinRunwayMinutes: 15, handoffHardCapMinutes: 360 },
+    });
+    expect(roomHandoffLimits(configured)).toEqual({
+      lifetimeMs: 60 * 60_000, minRunwayMs: 15 * 60_000, hardCapMs: 360 * 60_000,
+    });
+    expect(roomHandoffLimits(parseStoredConfig({}))).toEqual({
+      lifetimeMs: 30 * 60_000, minRunwayMs: 10 * 60_000, hardCapMs: 240 * 60_000,
+    });
+    expect(() => parseStoredConfig({ rooms: { turnTimeoutMinutes: 20, handoffMinRunwayMinutes: 10, handoffLifetimeMinutes: 5 } }))
+      .toThrow("rooms handoff bounds must satisfy handoffMinRunwayMinutes <= handoffLifetimeMinutes <= handoffHardCapMinutes");
   });
 
   it("canonicalizes legacy browser profile ids without dropping other stored settings", () => {
@@ -367,6 +429,25 @@ describe("configuration boundaries", () => {
     expect(vpsSshAlias({ vps: { sshAlias: "-bad" } })).toBeNull();
   });
 
+  it("validates browserEngine.attachCdpUrl as a bare CDP port or an http(s)/ws(s) URL, and forwards it only when configured", () => {
+    // Unset: behaves exactly as before the field existed.
+    expect(parseStoredConfig({})).toEqual({});
+    expect(browserEngineAttachCdpUrl({})).toBeNull();
+    // Valid forms round-trip through both the stored-file and PATCH schemas.
+    for (const value of ["9333", "1", "65535", "http://127.0.0.1:9333", "https://cdp.internal:9333/", "ws://127.0.0.1:9333/devtools/browser/abc"]) {
+      expect(parseStoredConfig({ browserEngine: { attachCdpUrl: value } })).toEqual({ browserEngine: { attachCdpUrl: value } });
+      expect(parseConfigPatch({ browserEngine: { attachCdpUrl: value } })).toEqual({ browserEngine: { attachCdpUrl: value } });
+      expect(browserEngineAttachCdpUrl({ browserEngine: { attachCdpUrl: value } })).toBe(value);
+    }
+    // Invalid values are rejected with a clear, field-named error rather than silently ignored.
+    for (const value of ["0", "70000", "not-a-url", "ftp://127.0.0.1:9333", "javascript:alert(1)"]) {
+      expect(() => parseConfigPatch({ browserEngine: { attachCdpUrl: value } })).toThrow("browserEngine.attachCdpUrl");
+    }
+    // An empty string clears the setting (same convention as tts.baseUrl, vps.sshAlias).
+    expect(parseConfigPatch({ browserEngine: { attachCdpUrl: "" } })).toEqual({ browserEngine: { attachCdpUrl: "" } });
+    expect(browserEngineAttachCdpUrl({ browserEngine: { attachCdpUrl: "" } })).toBeNull();
+  });
+
   it("accepts a persisted global room turn timeout and supplies the legacy default", () => {
     expect(parseStoredConfig({ rooms: { turnTimeoutMinutes: 20 } })).toEqual({
       rooms: { turnTimeoutMinutes: 20 },
@@ -485,9 +566,56 @@ describe("saving the newer sections", () => {
       rmSync(path, { force: true });
     }
   });
+
+  it("clears a thread event-log knob with null while other keys survive", () => {
+    const path = join(DATA_DIR, "config.json");
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(path, JSON.stringify({}));
+    try {
+      saveConfig({ threads: { maxConcurrentPerBot: 3, eventLogRetentionDays: 30, eventLogMaxBytes: 50 * 1024 * 1024 } });
+      // clearing one knob leaves the sibling knob and the concurrency limit alone
+      saveConfig({ threads: { eventLogRetentionDays: null } });
+      let disk = JSON.parse(readFileSync(path, "utf8"));
+      expect(disk.threads).toEqual({ maxConcurrentPerBot: 3, eventLogMaxBytes: 50 * 1024 * 1024 });
+      saveConfig({ threads: { eventLogMaxBytes: null } });
+      disk = JSON.parse(readFileSync(path, "utf8"));
+      expect(disk.threads).toEqual({ maxConcurrentPerBot: 3 });
+      expect(parseStoredConfig(disk).threads).toEqual({ maxConcurrentPerBot: 3 });
+      expect(threadEventLogRetentionDays(parseStoredConfig(disk))).toBeNull();
+      expect(threadEventLogMaxBytes(parseStoredConfig(disk))).toBeNull();
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it("seeds the concurrency default when the first threads save is an event-log knob", () => {
+    const path = join(DATA_DIR, "config.json");
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(path, JSON.stringify({}));
+    try {
+      saveConfig({ threads: { eventLogRetentionDays: 30 } });
+      const disk = JSON.parse(readFileSync(path, "utf8"));
+      expect(disk.threads).toEqual({ maxConcurrentPerBot: 3, eventLogRetentionDays: 30 });
+      // the persisted section must survive the stricter boot-time parse
+      expect(parseStoredConfig(disk).threads).toEqual({ maxConcurrentPerBot: 3, eventLogRetentionDays: 30 });
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
 });
 
 describe("default fleet", () => {
+  it("adds Mistral to product fleets and scopes its saved credential to Mistral", () => {
+    const map = instanceConfigs({ mistral: { key: "mistral-fixture" }, instances: { codex: { driver: "codex" } } });
+    expect(map.mistral).toEqual({ driver: "mistral", environment: { MISTRAL_API_KEY: "mistral-fixture" } });
+    expect(map.codex.environment).toEqual({});
+    expect(instanceConfigs({ instances: { standalone: { driver: "fake" } } })).not.toHaveProperty("mistral");
+    expect(parseConfigPatch({ mistral: { key: "" } })).toEqual({ mistral: { key: "" } });
+    const env = { MISTRAL_API_KEY: "mistral-fixture", KEEP: "yes" };
+    stripWorkspaceCredentialEnv(env);
+    expect(env).toEqual({ KEEP: "yes" });
+  });
+
   it("ships Qwen and Hermes as custom-only engines", () => {
     const map = instanceConfigs({});
     expect(map.qwen).toEqual({ driver: "qwenAgent", environment: {} });
@@ -659,6 +787,27 @@ describe("Instance CLI override", () => {
     expect(instances.injectedOnly.environment).toBeUndefined();
     instances.computer.environment!.MY_FLAG = "changed";
     expect(cfg.instances!.computer.environment!.MY_FLAG).toBe("1");
+  });
+
+  it("saving another engine's CLI does not freeze inherited API endpoint or model settings", () => {
+    const cfg: AppConfig = {
+      openaiCompat: { url: "https://first.example.test/v1", model: "first-model", provider: "first-provider" },
+      instances: {
+        claude: { driver: "claudeAgent" },
+        openaiCompat: { driver: "openai-compat", config: { tools: false } },
+        inherited: { driver: "openai-compat" },
+        custom: { driver: "openai-compat", config: { url: "https://custom.example.test/v1", provider: "", key: "fixture-custom" } },
+      },
+    };
+    const updated = withInstanceCli(cfg, "claude", "/fixture/claude").config;
+    expect(updated.instances!.openaiCompat.config).toEqual({ tools: false });
+    expect(updated.instances!.inherited.config).toBeUndefined();
+    expect(updated.instances!.custom.config).toEqual(cfg.instances!.custom.config);
+    updated.openaiCompat = { url: "https://second.example.test/v1", model: "second-model", provider: "second-provider" };
+    expect(instanceConfigs(updated).openaiCompat.config).toEqual({ tools: false, ...updated.openaiCompat });
+    const persisted = persistableInstanceConfigs(cfg);
+    (persisted.custom.config as Record<string, unknown>).url = "https://changed.example.test/v1";
+    expect(cfg.instances!.custom.config).toMatchObject({ url: "https://custom.example.test/v1" });
   });
 });
 
@@ -863,6 +1012,12 @@ describe("credential env preference", () => {
     expect(() => parseConfigPatch({ onboarding: { unknown: true } })).toThrow();
   });
 
+  it("persists a context change without losing the other context preferences", () => {
+    saveConfig({ context: { rebuildBytes: 32_000, autoCompact: false } });
+    saveConfig({ context: { compactAt: 0.75 } });
+    expect(loadConfig().context).toEqual({ rebuildBytes: 32_000, autoCompact: false, compactAt: 0.75 });
+  });
+
   it("falls back to the config file when the env var is unset (dev mode)", () => {
     writeFileSync(
       join(DATA_DIR, "config.json"),
@@ -899,6 +1054,30 @@ describe("credential env preference", () => {
     expect(loadConfig().instances).toEqual(existing.instances);
   });
 
+  it("rejects oversized default model changes before writing the template", () => {
+    saveConfig({ newBotDefaults: { profile: { modelSelection: { instanceId: "codex", model: "valid" } }, memory: {}, skills: [], routines: [] } });
+    const path = join(DATA_DIR, "config.json");
+    const before = readFileSync(path, "utf8");
+    for (const selection of [{ instanceId: "x".repeat(201), model: "valid" }, { instanceId: "codex", model: "x".repeat(501) }]) {
+      expect(() => saveConfig({ defaultModelSelection: selection })).toThrow();
+      expect(readFileSync(path, "utf8")).toBe(before);
+      expect(loadConfig().newBotDefaults?.profile.modelSelection?.model).toBe("valid");
+    }
+  });
+
+  it("rejects a valid model selection that would overflow the complete defaults template", () => {
+    const defaults = { profile: { modelSelection: { instanceId: "codex", model: "valid" } },
+      memory: { "memory/a.md": "a".repeat(225_000), "memory/b.md": "b".repeat(225_000),
+        "memory/c.md": "c".repeat(225_000), "memory/d.md": "" }, skills: [], routines: [] };
+    defaults.memory["memory/d.md"] = "d".repeat(899_990 - Buffer.byteLength(JSON.stringify(defaults), "utf8"));
+    saveConfig({ newBotDefaults: defaults });
+    const path = join(DATA_DIR, "config.json");
+    const before = readFileSync(path, "utf8");
+    expect(() => saveConfig({ defaultModelSelection: { instanceId: "codex", model: "m".repeat(500) } })).toThrow("900 KB");
+    expect(readFileSync(path, "utf8")).toBe(before);
+    expect(loadConfig().newBotDefaults).toEqual(defaults);
+  });
+
   it("replaces instance membership and known settings while preserving retained extension fields", () => {
     const path = join(DATA_DIR, "config.json");
     writeFileSync(path, JSON.stringify({
@@ -926,6 +1105,58 @@ describe("credential env preference", () => {
 
     saveConfig({ instances: {} }, { replaceInstances: true });
     expect(JSON.parse(readFileSync(path, "utf8")).instances).toEqual({});
+  });
+
+  it.each(["https://next.example.test/v1", ""])("an explicit workspace URL save (%s) repairs the shared default connection", (url) => {
+    const path = join(DATA_DIR, "config.json");
+    const instances = {
+      openaiCompat: { driver: "openai-compat", config: { url: "https://old.example.test/v1", tools: false, model: "selected", provider: "" } },
+      custom: { driver: "openai-compat", config: { url: "https://custom.example.test/v1", key: "fixture-custom" } },
+      customShared: { driver: "openai-compat", config: { url: "https://shared.example.test/v1" } },
+    };
+    writeFileSync(path, JSON.stringify({ openaiCompat: { url, key: "fixture-shared" }, instances }));
+    // Also repairs a URL already saved by an older version; no guessing at boot.
+    saveConfig({ openaiCompat: { url } });
+    const disk = JSON.parse(readFileSync(path, "utf8"));
+    expect(disk.instances.openaiCompat.config).toEqual({ tools: false, model: "selected", provider: "" });
+    expect(disk.instances.custom).toEqual(instances.custom);
+    expect(disk.instances.customShared).toEqual(instances.customShared);
+    expect(disk.openaiCompat).toEqual({ url, key: "fixture-shared" });
+    expect(instanceConfigs(loadConfig()).openaiCompat.config).toEqual({
+      tools: false, model: "selected", provider: "", ...(url ? { url } : {}),
+    });
+  });
+
+  it.each([
+    { config: { key: "fixture-private" } },
+    { config: { apiKeyEnv: "CUSTOM_API_KEY" } },
+    { environment: { OPENAI_COMPAT_API_KEY: "fixture-private" } },
+  ])("keeps an independently credentialed default connection when the workspace URL changes: %j", (override) => {
+    const entry = { driver: "openai-compat", ...override, config: { url: "https://private.example.test/v1", ...override.config } };
+    const path = join(DATA_DIR, "config.json");
+    writeFileSync(path, JSON.stringify({ instances: { openaiCompat: entry } }));
+    saveConfig({ openaiCompat: { url: "https://workspace.example.test/v1" } });
+    expect(JSON.parse(readFileSync(path, "utf8")).instances.openaiCompat).toEqual(entry);
+  });
+
+  it("preserves explicit instance URLs on unrelated saves and in a combined configuration patch", () => {
+    const path = join(DATA_DIR, "config.json");
+    const entry = { driver: "openai-compat", config: { url: "https://explicit.example.test/v1" } };
+    writeFileSync(path, JSON.stringify({ instances: { openaiCompat: entry } }));
+    saveConfig({ openaiCompat: { key: "fixture-replacement" }, profile: { name: "Fixture" } });
+    expect(JSON.parse(readFileSync(path, "utf8")).instances.openaiCompat).toEqual(entry);
+    saveConfig({ openaiCompat: { url: "https://workspace.example.test/v1" }, instances: { openaiCompat: entry } });
+    expect(JSON.parse(readFileSync(path, "utf8")).instances.openaiCompat).toEqual(entry);
+  });
+
+  it.each(["openai-compat", "future-driver"])("limits URL repair to the default OpenAI-compatible driver (%s)", (driver) => {
+    const path = join(DATA_DIR, "config.json");
+    const entry = { driver, config: { url: "https://old.example.test/v1" }, futureSetting: { keep: true } };
+    writeFileSync(path, JSON.stringify({ instances: { openaiCompat: entry } }));
+    saveConfig({ openaiCompat: { url: "https://next.example.test/v1" } });
+    expect(JSON.parse(readFileSync(path, "utf8")).instances.openaiCompat).toEqual({
+      ...entry, config: driver === "openai-compat" ? {} : entry.config,
+    });
   });
 
   it("loads legacy browser profiles without resetting config and canonicalizes them on the next write", () => {
@@ -1051,6 +1282,29 @@ describe("workspace credential env strip", () => {
     };
     stripWorkspaceCredentialEnv(env);
     expect(env).toEqual({ PATH: "/usr/bin", MY_FLAG: "1" });
+  });
+
+  it("keeps a hosted tenant's control-plane secrets out of every child env, and only those", () => {
+    // What the hosting control plane and a fleet put in the server's
+    // environment. `OMB_CLOUD_FUTURE_SECRET` stands for a name added later.
+    const operator = {
+      OMB_CLOUD_READY_TOKEN: "ready", OMB_CLOUD_BOOTSTRAP: "bootstrap", OMB_CLOUD_GATEWAY_TOKEN: "gateway",
+      OMB_CLOUD_MODELS: "models", OMB_CLOUD_REVISION: "revision", OMB_CLOUD_FUTURE_SECRET: "later",
+      OMB_LICENSE_KEY: "license", OMB_INSTALLATION_CREDENTIAL: "fleet", omb_cloud_ready_token: "windows-spelling",
+    };
+    // What an engine deliberately receives (server/hosted-models.ts passes the
+    // hosted model token as the provider key), plus look-alike names.
+    const engine = {
+      PATH: "/usr/bin", ANTHROPIC_API_KEY: "hosted-token", ANTHROPIC_AUTH_TOKEN: "hosted-token",
+      ANTHROPIC_BASE_URL: "https://admin.example.test/api/gateway/w/anthropic", OPENMAUSBOT_COMPANY_API_KEY: "hosted-token",
+      OMB_MANAGED_CODEX_TOKEN: "hosted-token", CODEX_HOME: "/data/codex", OMB_HOOK_TOKEN_FILE: "/data/hook-tokens/a.token",
+      OMB_CLOUDFLARED_PATH: "/usr/local/bin/cloudflared", OMB_CLOUD: "not-prefixed", MY_OMB_CLOUD_NOTE: "user",
+    };
+    for (const strip of [stripControlPlaneEnv, stripWorkspaceCredentialEnv]) {
+      const env: Record<string, string | undefined> = { ...operator, ...engine };
+      strip(env);
+      expect(env).toEqual(engine);
+    }
   });
 
   it("covers in-process secrets and private app-state paths", () => {

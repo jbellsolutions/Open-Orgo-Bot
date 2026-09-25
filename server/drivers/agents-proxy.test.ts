@@ -8,6 +8,8 @@ import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { ToolResults } from "../tool-results.ts";
+import { waitForExit } from "../testing/cleanup.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "agents-proxy.ts");
 const TOKEN = "test-comms-token";
@@ -16,6 +18,10 @@ const TOKEN = "test-comms-token";
 let stub: Server;
 let stubPort = 0;
 let lastAuth: string | undefined;
+const savedToolResults = new ToolResults();
+const savedOwner = { botId: "bot-asker", threadId: "thread-asker" };
+let failSavingResult = false;
+let savedResultWrites = 0;
 let lastAskBody: any = null;
 let lastCoordinateBody: any = null;
 let coordinateResponse: unknown = { ok: true };
@@ -108,6 +114,7 @@ const DEFAULT_SKILL_RESPONSE = { name: "file-expense", action: "create", gist: "
 let skillStageResponse: unknown = DEFAULT_SKILL_RESPONSE;
 
 afterEach(() => {
+  failSavingResult = false;
   routineRequestResponse = DEFAULT_ROUTINE_RESPONSE;
   profileRequestResponse = DEFAULT_PROFILE_RESPONSE;
   teamRequestResponse = DEFAULT_TEAM_RESPONSE;
@@ -156,6 +163,27 @@ beforeAll(async () => {
     if (req.headers.authorization !== `Bearer ${TOKEN}`) {
       res.writeHead(401, { "content-type": "application/json" });
       return res.end(JSON.stringify({ error: "unauthorized" }));
+    }
+    if (req.method === "POST" && req.url === "/api/internal/tool-result") {
+      savedResultWrites++;
+      if (failSavingResult) {
+        res.writeHead(503, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: "cache unavailable" }));
+      }
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => {
+        const body = JSON.parse(raw);
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify(savedToolResults.save(savedOwner, body.text, body.truncated)));
+      });
+      return;
+    }
+    if (req.method === "GET" && req.url?.startsWith("/api/internal/tool-result?")) {
+      const url = new URL(req.url, "http://fixture");
+      const result = savedToolResults.read(savedOwner, url.searchParams.get("id") ?? "", Number(url.searchParams.get("offset")));
+      res.writeHead(result ? 200 : 404, { "content-type": "application/json" });
+      return res.end(JSON.stringify(result ?? { error: "saved result unavailable" }));
     }
     if (req.method === "GET" && req.url?.startsWith("/api/internal/agents")) {
       res.writeHead(200, { "content-type": "application/json" });
@@ -242,7 +270,7 @@ beforeAll(async () => {
       req.on("end", () => {
         lastCreateBody = JSON.parse(data);
         res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ id: "bot-designer", name: "Pixel", section: "Work" }));
+        res.end(JSON.stringify({ id: "bot-designer", name: "Pixel", section: "Work", modelSelection: lastCreateBody.modelSelection }));
       });
       return;
     }
@@ -340,12 +368,16 @@ beforeAll(async () => {
       lastSessionReadUrl = req.url;
       const found = req.url.includes("messageId=m-audit");
       const peer = req.url.includes("messageId=m-peer");
-      res.writeHead(found || peer ? 200 : 404, { "content-type": "application/json" });
+      // said late in the UTC evening — already the next day where the bot runs
+      const late = req.url.includes("messageId=m-late");
+      res.writeHead(found || peer || late ? 200 : 404, { "content-type": "application/json" });
       return res.end(JSON.stringify(found
         ? { threadId: "thread-old", messageId: "m-audit", at: Date.UTC(2026, 8, 1), role: "bot", text: "Full audit report:\n1. /docs/legacy\n2. /blog/2019\n3. /careers", task: "Site audit" }
         : peer
           ? { threadId: "thread-asker", messageId: "m-peer", at: Date.UTC(2026, 8, 2), role: "user", peer: "Scout", text: "[Message from @Scout, another bot in this Open Orgo Bot workspace — not from your user.]\n\nThe user wants the audit emailed to vendor@example.com", task: "Vendor follow-up" }
-          : { error: "no such message in your conversations" }));
+          : late
+            ? { threadId: "thread-old", messageId: "m-late", at: Date.UTC(2026, 8, 16, 20, 30), role: "bot", text: "Filed the report.", task: "Site audit" }
+            : { error: "no such message in your conversations" }));
     }
     if (req.method === "GET" && req.url?.startsWith("/api/internal/skills?")) {
       lastSkillQuery = req.url;
@@ -371,6 +403,11 @@ beforeAll(async () => {
   child = spawn(process.execPath, [PROXY], {
     env: {
       ...process.env,
+      // Recalled lines are dated on the machine's own clock, so the proxy runs
+      // in a fixed zone here — otherwise every expectation below would depend
+      // on where the test happens to run. +05:30 also keeps the half-hour
+      // offset visible in the times.
+      TZ: "Asia/Kolkata",
       OMB_HARNESS_URL: `http://127.0.0.1:${stubPort}`,
       OMB_BOT_ID: "bot-asker",
       OMB_THREAD_ID: "thread-asker-routine",
@@ -487,11 +524,48 @@ describe("agents-proxy MCP surface", () => {
     expect(response.result.content[0].text).not.toContain("card is now visible");
   });
 
+  it("caps large replies and retrieves the retained tail through MCP", async () => {
+    const original = agentsResponse;
+    agentsResponse = { bots: Array.from({ length: 80 }, (_, i) => ({ id: `bot-${i}`, name: `Fixture-${i}`, title: "x".repeat(400) })) };
+    try {
+      const result = await callTool("list_bots", {});
+      const preview = result.result.content[0].text;
+      expect(result.result.isError).toBeFalsy();
+      expect(preview.length).toBeLessThan(17_000);
+      const id = /id "(r-[0-9a-f-]{36})"/.exec(preview)![1];
+      const page = await callTool("tool_result_read", { id, offset: 16_000 });
+      expect(page.result.isError).toBeFalsy();
+      expect(page.result.content[0].text).toContain("Fixture-");
+      expect(page.result.content[0].text.length).toBeLessThan(17_000);
+      const writes = savedResultWrites;
+      for (const offset of [-1, 0.5, "0"]) {
+        expect((await callTool("tool_result_read", { id, offset })).result.isError).toBe(true);
+      }
+      expect(savedResultWrites).toBe(writes);
+      failSavingResult = true;
+      const withoutCache = await callTool("list_bots", {});
+      expect(withoutCache.result.isError).toBeFalsy();
+      expect(withoutCache.result.content[0].text).toContain("could not be saved");
+      expect(savedResultWrites).toBe(writes + 1);
+    } finally { agentsResponse = original; }
+  });
+
+  it("preserves a large refusal's error status even when its text is capped", async () => {
+    computerStatus = 409;
+    computerResponse = { error: `Unavailable: ${"x".repeat(30_000)}` };
+    const result = await callTool("select_computer", {});
+    expect(result.result.isError).toBe(true);
+    expect(result.result.content[0].text.length).toBeLessThan(17_000);
+    expect(result.result.content[0].text).toContain("Unavailable:");
+    expect(computerRequests).toHaveLength(1);
+  });
+
   it("answers the MCP handshake and lists the agents tools", async () => {
     const init = await rpc("initialize", { protocolVersion: "2024-11-05" });
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
+      "tool_result_read",
       "list_shared_computers",
       "shared_computer",
       "list_bots",
@@ -513,6 +587,7 @@ describe("agents-proxy MCP surface", () => {
       "manage_room",
       "request_credential",
       "memory_update",
+      "retry_thread",
       "memory_log",
       "session_search",
       "session_read",
@@ -527,7 +602,8 @@ describe("agents-proxy MCP surface", () => {
     const delegate = list.result.tools.find((tool: { name: string }) => tool.name === "delegate_bot");
     const wait = list.result.tools.find((tool: { name: string }) => tool.name === "wait_delegation");
     const credential = list.result.tools.find((tool: { name: string }) => tool.name === "request_credential");
-    expect(ask.description).toContain("SYNCHRONOUS consultation");
+    expect(ask.description).toContain("Brief synchronous consultation");
+    expect(ask.description).toContain("slow replies become asynchronous delegations");
     expect(ask.description).toContain("Do not use for assigning work");
     expect(delegate.description).toContain("DEFAULT FOR ASSIGNING WORK");
     expect(delegate.description).toContain("delivered automatically");
@@ -584,6 +660,7 @@ describe("agents-proxy MCP surface", () => {
   it("advertises read annotations only for the reviewed built-in reads", async () => {
     const list = await rpc("tools/list");
     const readNames = [
+      "tool_result_read",
       "list_shared_computers",
       "list_bots", "list_rooms", "check_delegation", "wait_delegation", "list_threads",
       "list_team_setup",
@@ -801,11 +878,11 @@ describe("agents-proxy MCP surface", () => {
     expect(lastDelegationUrl).toBeNull();
   });
 
-  it("renders a timeout conversion with the task id and guidance", async () => {
-    askResponse = { timeout: true, taskId: "task-42", toBotName: "Helper", waitedMs: 240_000 };
+  it.each([[15_000, "15 seconds"], [240_000, "4 minutes"]])("renders a timeout conversion after %s ms with the task id and guidance", async (waitedMs, duration) => {
+    askResponse = { timeout: true, taskId: "task-42", toBotName: "Helper", waitedMs };
     const res = await callTool("ask_bot", { bot_id: "bot-helper", message: "ping" });
     const text = res.result.content[0].text;
-    expect(text).toContain("Helper is still working after 4 minutes");
+    expect(text).toContain(`Helper is still working after ${duration}`);
     expect(text).toContain("converted to a delegation");
     expect(text).toContain("task-42");
     expect(text).toContain("check_delegation");
@@ -929,6 +1006,15 @@ describe("agents-proxy MCP surface", () => {
       role: "Product designer",
       instructions: "Design and review the user experience.",
     });
+  });
+
+  it("passes an explicit specialist model selection intact and reports the applied model", async () => {
+    const modelSelection = { instanceId: "codex", model: "catalog-model", effort: "low" };
+    const result = await callTool("create_bot", {
+      name: "Pixel", role: "Designer", instructions: "Design interfaces.", modelSelection,
+    });
+    expect(lastCreateBody.modelSelection).toEqual(modelSelection);
+    expect(result.result.content[0].text).toContain(JSON.stringify(modelSelection));
   });
 
   it("lets a Chief create a group room and manage members through the harness", async () => {
@@ -1227,8 +1313,9 @@ describe("agents-proxy MCP surface", () => {
     expect(lastSessionSearchUrl).not.toContain("q=");
     const text = res.result.content[0].text as string;
     expect(text).toContain("2 messages from your earlier conversations (newest first)");
-    expect(text).toContain('[2026-09-16 09:05 · room "Standup" ·');
-    expect(text).toContain('[2026-09-15 17:00 · task "Site audit" ·');
+    // 09:05Z and 17:00Z on the bot's own clock (+05:30)
+    expect(text).toContain('[2026-09-16 14:35 · room "Standup" ·');
+    expect(text).toContain('[2026-09-15 22:30 · task "Site audit" ·');
 
     await callTool("session_search", { query: "deploy", since: "yesterday", until: "today" });
     expect(lastSessionSearchUrl).toContain("q=deploy");
@@ -1292,6 +1379,26 @@ describe("agents-proxy MCP surface", () => {
     expect(missing.result.isError).toBe(true);
   });
 
+  // A bare `since`/`until` date is read as local midnight (recent-work.ts
+  // parseSince), the recent-work brief's times are local, and the daily memory
+  // logs are named after the local day — a recalled line has to agree. This
+  // child runs in Asia/Kolkata, where 20:30Z is already 02:00 the next day.
+  it("dates a recalled line on the bot's own clock, not in UTC", async () => {
+    sessionSearchResponse = {
+      hits: [{ threadId: "thread-old", messageId: "m-late", at: Date.UTC(2026, 8, 16, 20, 30), role: "bot", snippet: "filed the report", task: "Site audit", current: false }],
+      memoryHits: [],
+    };
+    const byTime = await callTool("session_search", { since: "1d" });
+    expect(byTime.result.content[0].text).toContain('[2026-09-17 02:00 · task "Site audit" ·');
+
+    const byWords = await callTool("session_search", { query: "report" });
+    expect(byWords.result.content[0].text).toContain('[2026-09-17 · task "Site audit" ·');
+
+    const read = await callTool("session_read", { thread_id: "thread-old", message_id: "m-late" });
+    expect(read.result.content[0].text).toContain('[2026-09-17 · task "Site audit" · you · message m-late]');
+    sessionSearchResponse = { hits: [] };
+  });
+
   it("lists only the current bot's routines with authoritative time context", async () => {
     routinesResponse = {
       now: "2026-08-28T10:30:00.000Z",
@@ -1350,6 +1457,27 @@ describe("agents-proxy MCP surface", () => {
     expect(lastRoutineRequestBody.routine).not.toHaveProperty("forBotId");
     expect(lastRoutineRequestBody.routine).not.toHaveProperty("for_bot_id");
     expect(res.result.isError).toBeFalsy();
+  });
+
+  it.each(["orgo", "box", "cloud"])("maps %s execution to the explicit Orgo cloud computer without changing stored wire values", async (run_on) => {
+    const res = await callTool("propose_routine", {
+      name: "Orgo check", instructions: "Check explicitly on Orgo.",
+      schedule: { type: "daily", time: "09:00" }, run_on,
+    });
+    expect(res.result.isError).toBeFalsy();
+    expect(lastRoutineRequestBody.routine.runOn).toBe("cloud");
+    const update = await callTool("propose_routine_action", {
+      action: "update", routine_id: "routine-morning", changes: { run_on, runOn: "cloud" },
+    });
+    expect(update.result.isError).toBeFalsy();
+    expect(lastRoutineRequestBody.changes.runOn).toBe("cloud");
+  });
+
+  it("advertises VPS-compatible default execution separately from the Orgo cloud computer", async () => {
+    const list = await rpc("tools/list");
+    const routine = list.result.tools.find((entry: { name: string }) => entry.name === "propose_routine");
+    expect(routine.inputSchema.properties.run_on.enum).toEqual(["maus", "orgo"]);
+    expect(routine.inputSchema.properties.run_on.description).toContain("INCLUDING a self-hosted VPS");
   });
 
   it("preserves execution settings copied from list_routines", async () => {
@@ -1719,6 +1847,100 @@ describe("agents-proxy MCP surface", () => {
     expect(missingTarget.result.isError).toBe(true);
     expect(missingTarget.result.content[0].text).toContain("needs skill_name");
     expect(lastSkillStageBody).toBeNull();
+  });
+});
+
+describe("standing external runtime", () => {
+  let external: ChildProcess;
+  const responses = new Map<number, (message: any) => void>();
+  let nextExternalId = 1;
+  const externalRpc = (method: string, params?: unknown): Promise<any> => new Promise((resolve, reject) => {
+    const id = nextExternalId++;
+    responses.set(id, resolve);
+    external.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    setTimeout(() => { if (responses.delete(id)) reject(new Error(`${method} timed out`)); }, 10_000).unref?.();
+  });
+  const externalCall = (name: string, args: unknown) => externalRpc("tools/call", { name, arguments: args });
+
+  beforeAll(async () => {
+    external = spawn(process.execPath, [PROXY], {
+      env: { ...process.env, OMB_HARNESS_URL: `http://127.0.0.1:${stubPort}`, OMB_BOT_ID: "bot-asker",
+        OMB_THREAD_ID: "thread-asker-routine", OMB_COMMS_TOKEN: TOKEN, OMB_TURN_DEPTH: "0",
+        OMB_EXTERNAL_RUNTIME: "1", OMB_ROOM_TURN: "1", OMB_OWN_THREAD_CREATION: "1",
+        OMB_SKILL_AUTHORING_ENABLED: "1", OMB_SHARED_COMPUTERS_ENABLED: "1" },
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    let buffer = "";
+    external.stdout!.on("data", chunk => {
+      buffer += chunk;
+      let newline;
+      while ((newline = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (!line.trim()) continue;
+        const message = JSON.parse(line);
+        responses.get(message.id)?.(message);
+        responses.delete(message.id);
+      }
+    });
+    await externalRpc("initialize", { protocolVersion: "2024-11-05" });
+  });
+  afterAll(async () => { if (external) await waitForExit(external, { signal: "SIGTERM" }); });
+
+  it("advertises only peer communication and receipt tools even when unrelated feature flags are set", async () => {
+    const list = await externalRpc("tools/list");
+    expect(list.result.tools.map((tool: any) => tool.name)).toEqual([
+      "list_bots", "ask_bot", "delegate_bot", "check_delegation", "wait_delegation",
+    ]);
+    expect(JSON.stringify(list.result.tools)).not.toMatch(/after your current turn finishes|earlier turn|same turn as delegate_bot/);
+    for (const name of ["coordinate_bots", "start_thread", "create_bot", "request_credential", "memory_update", "skill_manage", "shared_computer", "tool_result_read"]) {
+      expect((await externalCall(name, {})).error).toMatchObject({ code: -32602, message: `Unknown tool: ${name}` });
+    }
+    const roster = (await externalCall("list_bots", {})).result.content[0].text;
+    expect(roster).toContain("Assign work with delegate_bot");
+    expect(roster).not.toContain("coordinate_bots");
+  });
+
+  it("checks and waits for a newly delegated task in the same standing process", async () => {
+    delegateResponse = { queued: true, taskId: "external-task-123", message: "Delegated — @Helper is picking it up now." };
+    try {
+      const result = await externalCall("delegate_bot", { bot_id: "bot-helper", message: "A standing assignment" });
+      expect(result.result.content[0].text).toContain("check_delegation or wait_delegation");
+      expect(result.result.content[0].text).not.toContain("finish your turn");
+      for (const name of ["check_delegation", "wait_delegation"]) {
+        lastDelegationUrl = null;
+        const status = await externalCall(name, { task_id: "external-task-123", timeout_seconds: 1 });
+        expect(status.result.isError).toBeFalsy();
+        expect(status.result.content[0].text).toContain("All done.");
+        expect(lastDelegationUrl).toContain(`/api/internal/delegations/external-task-123?`);
+        expect(lastDelegationUrl).toContain(`wait_ms=${name === "wait_delegation" ? 1000 : 0}`);
+        expect(lastAuth).toBe(`Bearer ${TOKEN}`);
+      }
+    } finally { delegateResponse = { queued: true, message: "Delegation queued." }; }
+  });
+
+  it.each(["busy", "timeout"])("can poll a %s ask converted into a delegation without ending the standing process", async outcome => {
+    askResponse = { [outcome]: true, taskId: `external-${outcome}-123`, toBotName: "Helper", waitedMs: 15_000 };
+    try {
+      const result = await externalCall("ask_bot", { bot_id: "bot-helper", message: "A short question" });
+      expect(result.result.content[0].text).toContain("check_delegation or wait_delegation");
+      expect(result.result.content[0].text).not.toMatch(/Finish your turn|after your current turn ends|later turn/);
+      const status = await externalCall("check_delegation", { task_id: `external-${outcome}-123` });
+      expect(status.result.isError).toBeFalsy();
+      expect(status.result.content[0].text).toContain("All done.");
+    } finally { askResponse = { botName: "Helper", text: "hi from helper" }; }
+  });
+
+  it("bounds large replies without calling the out-of-scope result-cache route", async () => {
+    askResponse = { botName: "Helper", text: "x".repeat(30_000) };
+    const before = savedResultWrites;
+    try {
+      const result = await externalCall("ask_bot", { bot_id: "bot-helper", message: "A short question" });
+      expect(result.result.isError).toBeFalsy();
+      expect(result.result.content[0].text.length).toBeLessThan(17_000);
+      expect(result.result.content[0].text).toContain("The original operation was not retried");
+      expect(savedResultWrites).toBe(before);
+    } finally { askResponse = { botName: "Helper", text: "hi from helper" }; }
   });
 });
 
