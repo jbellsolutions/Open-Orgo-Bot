@@ -22,8 +22,8 @@ import {
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { MessageActions, messageActionClass } from "@/components/MessageActions";
 import { useSpeech } from "@/lib/tts/useSpeech";
-import { useCaptionChrome } from "@/components/DesktopCapabilities";
-import { cachedInput, cachedKnown, contextChip, contextDetail, contextShare, costCaption, formatTokens, formatUsd, freshTokens, hasFiniteCost, lastTurnDetail, usageChip, usageDetail } from "@/lib/usage";
+import { useCaptionChrome, useDesktopCapabilities } from "@/components/DesktopCapabilities";
+import { contextChip, contextDetail, contextShare, costCaption, formatUsd, hasFiniteCost, lastTurnDetail, usageChip, usageDetail } from "@/lib/usage";
 import {
   api,
   currentTaskBot,
@@ -38,6 +38,8 @@ import {
   type Message,
 } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
+import { MacCuaRecoveryActions } from "./MacCuaRecoveryActions";
+import { macCuaPermissionMessage, missingMacCuaPermissions } from "@/lib/mac-cua-permissions";
 import { isProviderSafetyBlock, PROVIDER_SAFETY_GUIDANCE, PROVIDER_SAFETY_HELP_URL } from "../../shared/provider-safety";
 import { BotAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
@@ -64,6 +66,7 @@ import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachmentGallery, collectMessageFiles } from "./AttachmentGallery";
 import { ScreenFrame } from "./ScreenFrame";
+import { CompactionChip, DigestChip } from "./DigestChip";
 import { RenameTitle } from "./RenameTitle";
 import { BotActivityPicker, TaskPicker } from "./TaskPicker";
 import { ModelPicker } from "./ModelPicker";
@@ -155,13 +158,25 @@ export function ErrorRow({
   onRetry?: () => void;
   setupInstance?: InstanceInfo;
 }) {
+  const { capabilities, ready } = useDesktopCapabilities();
+  const failedPermissions = missingMacCuaPermissions(message);
+  const currentPermissions = missingMacCuaPermissions(capabilities.localComputer.message);
+  const macCuaReason = ready && capabilities.host.platform === "darwin" &&
+    capabilities.localComputer.available === false && capabilities.localComputer.reasonCode !== "remote-server" &&
+    message.startsWith("CUA Driver is not ready for this computer — ") &&
+    failedPermissions.length > 0 && failedPermissions.join(",") === currentPermissions.join(",")
+    ? macCuaPermissionMessage(currentPermissions)
+    : null;
   return (
     <div className="flex justify-start">
       <div className="w-fit max-w-[min(42rem,78%)] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
         <div className="flex items-start gap-2">
           <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{message}</span>
+          <span className="min-w-0 break-words">{macCuaReason ?? message}</span>
         </div>
+        {macCuaReason && <details className="mt-2 text-[12px] text-ink-secondary"><summary className="cursor-pointer">{t("computer.mac.permission.driverDetail")}</summary><p className="mt-1 break-words">{message}</p></details>}
+        {macCuaReason &&
+          <MacCuaRecoveryActions reason={message} />}
         {isProviderSafetyBlock(message) ? (
           <p className="mt-2 text-[12.5px] leading-relaxed text-ink-secondary">
             {PROVIDER_SAFETY_GUIDANCE}{" "}
@@ -303,7 +318,10 @@ function Bubble({
   const speech = useSpeech();
   const speaking = speech.messageId === message.id && speech.status !== "idle";
   const text = peer ? peer.body : (message.text ?? "");
-  const generatedPaths = useMemo(() => message.attachments?.map((attachment) => attachment.path) ?? [], [message.attachments]);
+  const generatedPaths = useMemo(
+    () => message.attachments?.filter((attachment) => attachment.kind === "image").map((attachment) => attachment.path) ?? [],
+    [message.attachments],
+  );
   const linkedFiles = useMemo(() => user ? [] : collectMessageFiles(text, generatedPaths), [user, text, generatedPaths]);
   const webhookView = user ? webhookMessageView(text) : null;
   const attachments = user && !webhookView ? splitTranscriptAttachments(text) : null;
@@ -324,7 +342,8 @@ function Bubble({
   const versions = user ? messageVersions(bot, message) : [message];
   const versionIndex = versions.findIndex((v) => v.id === message.id);
   const switchTo = (v: Message | undefined) => {
-    if (v && !bot.busy) dispatch({ type: "switchBranch", botId: bot.id, threadId: bot.threadId, messageId: v.id });
+    // an edit still waiting for its server fork has no branch to switch to yet
+    if (v && !bot.busy && !v.id.startsWith("optimistic-")) dispatch({ type: "switchBranch", botId: bot.id, threadId: bot.threadId, messageId: v.id });
   };
 
   return (
@@ -335,7 +354,7 @@ function Bubble({
           <MessageActions side="user">
             {/* editing rewinds the thread, so it waits for the turn to end —
                 same rule as the version switcher below */}
-            {message.kind === "text" && !webhookView && !hasAttachments && !bot.busy && (
+            {message.kind === "text" && !webhookView && !hasAttachments && !bot.busy && !message.id.startsWith("optimistic-") && (
               <button
                 onClick={onStartEdit}
                 aria-label={t("chat.editMessage")}
@@ -773,6 +792,11 @@ const MessagesList = memo(function MessagesList({
               if (!showToolCalls && !m.comm && !m.threadRef) return null;
               return <ActivityChip message={m} place={place} />;
             }
+            case "digest":
+              // the summary of the turn's tool chips: shown under the same setting
+              return showToolCalls ? <DigestChip message={m} /> : null;
+            case "compaction":
+              return <CompactionChip message={m} />;
             case "screen":
               return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
             default:
@@ -1003,17 +1027,18 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
     }, 520);
   }, [lastMessage?.id, lastMessage?.role, lastMessage?.kind]);
   const presenceVisible = waiting || popping !== null;
-  // Wall-clock anchor for the working row's elapsed readout — set when the
-  // turn starts, cleared when it settles, reset on bot switch.
+  // Wall-clock anchor for the working row's elapsed readout — the server
+  // stamps the turn's real start (turnStartedAt), so switching threads keeps
+  // the count truthful; Date.now() only covers servers without the stamp.
   const [busySince, setBusySince] = useState<number | null>(null);
   useEffect(() => {
-    setBusySince(bot.busy ? Date.now() : null);
-  }, [bot.busy, bot.id, bot.threadId]);
+    setBusySince(bot.busy ? bot.turnStartedAt ?? Date.now() : null);
+  }, [bot.busy, bot.id, bot.threadId, bot.turnStartedAt]);
 
   // regenerate = fork the last user message with the same text — reuses the
   // existing branch machinery, so the old answer stays reachable via ‹ ›
   const regenerate = useCallback(() => {
-    if (lastUserMessage?.text && !bot.busy) {
+    if (lastUserMessage?.text && !bot.busy && !lastUserMessage.id.startsWith("optimistic-")) {
       dispatch({ type: "editMessage", botId: bot.id, threadId: bot.threadId, messageId: lastUserMessage.id, text: lastUserMessage.text });
     }
   }, [lastUserMessage, bot.busy, bot.id, bot.threadId, dispatch]);
@@ -1067,9 +1092,12 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
   // (browser scroll anchoring is disabled on this container).
-  const preExpandHeight = useRef<number | null>(null);
+  // The captured height belongs to the thread it was taken in: a switch
+  // between the capture and the commit would otherwise shift the new
+  // thread's viewport by the old one's growth.
+  const preExpandHeight = useRef<{ key: string; height: number } | null>(null);
   const showEarlier = () => {
-    preExpandHeight.current = scrollRef.current?.scrollHeight ?? null;
+    preExpandHeight.current = scrollRef.current ? { key: transcriptKey, height: scrollRef.current.scrollHeight } : null;
     // expanding means reading scrollback — never let a mid-expand stream
     // event pin the viewport back to the bottom
     setBottomFollow(false);
@@ -1078,19 +1106,45 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   };
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (preExpandHeight.current === null || !el) return;
-    el.scrollTop += el.scrollHeight - preExpandHeight.current;
+    const captured = preExpandHeight.current;
+    if (!captured || !el) return;
     preExpandHeight.current = null;
+    if (captured.key !== transcriptKey) return;
+    el.scrollTop += el.scrollHeight - captured.height;
     // keep the resume-follow heuristic from reading the restore as a
     // downward user scroll
     previousScrollTop.current = el.scrollTop;
-  }, [transcriptWindow.start]);
+    // transcriptKey is a dependency so a switch runs this and drops a capture
+    // that belongs to the thread being left.
+  }, [transcriptWindow.start, transcriptKey]);
 
   const showLater = () => {
     setBottomFollow(false);
     const nextEnd = Math.min(messages.length, endIndex + TRANSCRIPT_WINDOW_SIZE);
     setTranscriptWindow((w) => ({ ...w, end: nextEnd >= messages.length ? null : nextEnd }));
   };
+
+  // Scrollback across the network: the snapshot holds a bounded page, and
+  // everything before it is still on the server. Asking for it prepends rows
+  // exactly like expanding the local window, so the same height capture keeps
+  // the viewport still — here it is applied when the transcript grows at the
+  // front rather than when the boundary moves.
+  const olderPending = Boolean(state.loadingOlder[bot.threadId]);
+  const loadOlder = () => {
+    preExpandHeight.current = scrollRef.current ? { key: transcriptKey, height: scrollRef.current.scrollHeight } : null;
+    setBottomFollow(false);
+    dispatch({ type: "loadOlderMessages", threadId: bot.threadId });
+  };
+  const oldestId = messages[0]?.id;
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const captured = preExpandHeight.current;
+    if (!captured || !el) return;
+    preExpandHeight.current = null;
+    if (captured.key !== transcriptKey) return;
+    el.scrollTop += el.scrollHeight - captured.height;
+    previousScrollTop.current = el.scrollTop;
+  }, [oldestId, transcriptKey]);
 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home/ArrowUp
   // break follow like an upward wheel; the at-end onScroll check re-arms it.
@@ -1174,6 +1228,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             </span>
           )}
           {bot.busy && <WorkingDots className="text-ink-secondary" />}
+          {!bot.busy && bot.waitingForTeammates && <span className="truncate text-[12px] text-ink-secondary" role="status">Teammates working</span>}
         </div>
         <div
           className="flex shrink-0 items-center gap-2"
@@ -1199,7 +1254,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             messages={messages}
             botName={bot.name}
           />
-          {bot.busy && (
+          {(bot.busy || bot.waitingForTeammates) && (
             <button
               onClick={() => dispatch({ type: "interrupt", botId: bot.id, threadId: bot.threadId })}
               className={cn(
@@ -1324,7 +1379,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           aria-live="polite"
           aria-label={t("chat.conversationWith", { name: bot.name })}
         >
-          {hiddenCount > 0 && (
+          {hiddenCount > 0 ? (
             <div className="flex justify-center pt-2">
               <button
                 onClick={showEarlier}
@@ -1333,7 +1388,17 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
                 {t("chat.showEarlier", { count: hiddenCount })}
               </button>
             </div>
-          )}
+          ) : bot.hasMore ? (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={loadOlder}
+                disabled={olderPending}
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-60"
+              >
+                {olderPending ? t("chat.loadingEarlier") : t("chat.loadEarlier")}
+              </button>
+            </div>
+          ) : null}
           <MessagesList
             bot={bot}
             locale={activeLocale()}
@@ -1435,7 +1500,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
         onClearReply={clearReply}
         onConsumeReply={consumeReply}
         onRestoreReply={restoreReply}
-        onEditLast={lastUserMessage && !lastUserMessageHasAttachments && !bot.busy
+        onEditLast={lastUserMessage && !lastUserMessageHasAttachments && !bot.busy && !lastUserMessage.id.startsWith("optimistic-")
           ? () => setEditingId(lastUserMessage.id)
           : undefined}
       />
@@ -1464,13 +1529,12 @@ function UsageChip({ bot }: { bot: Bot }) {
     // model re-reading what it already saw — say so, or the figure reads as
     // a bug (issue #527); past 80% of the window the fix is a new thread
     share?.tone === "danger" ? t("chat.usage.contextNudge") : null,
-    cachedInput(usage) > 0 ? (cachedKnown(usage) ? t("chat.usage.newNote") : t("chat.usage.cachedNote")) : null,
     hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
   ]
     .filter(Boolean)
     .join("\n");
-  // folded: one figure — cost when the engine reports one, else new tokens
-  const short = hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : formatTokens(cachedKnown(usage) ? freshTokens(usage) : usage.input + usage.output);
+  // Keep the unit visible in the compact header too.
+  const short = text;
   const ctx = contextChip(usage);
   return (
     <button

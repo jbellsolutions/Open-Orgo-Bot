@@ -1,3 +1,4 @@
+import type { InstanceInfo } from "@/state/store";
 import { isCloudComputerBusyMessage } from "../../shared/computer-contention";
 
 /** Older hosts return only a message/status pair. Do not hide unrelated
@@ -28,4 +29,12 @@ export function remoteScreenshotSource(raw: unknown): string | null {
   if (typeof frame.png !== "string" || !frame.png || !/^[A-Za-z0-9+/=]+$/.test(frame.png)) return null;
   if (frame.format !== "png" && frame.format !== "jpeg") return null;
   return `data:${frame.format === "jpeg" ? "image/jpeg" : "image/png"};base64,${frame.png}`;
+}
+
+/** Match the server: the selected engine runs the Orgo computer when it can
+ * mount computer MCP tools. Open Orgo Bot has no separate Box runner. */
+export function cloudRunner(instances: readonly InstanceInfo[], selectedId?: string): InstanceInfo | undefined {
+  if (!selectedId) return undefined;
+  const selected = instances.find(instance => instance.instanceId === selectedId);
+  return selected?.capabilities?.computerMcp || selected?.capabilities?.cloudComputerMcp ? selected : undefined;
 }

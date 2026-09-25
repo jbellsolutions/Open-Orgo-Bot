@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Card, CommandLine } from "./SettingsPrimitives";
+import { MacLocalControl } from "./MacLocalControl";
 import { cn } from "@/lib/cn";
 
 type Action = "pull" | "run" | "start" | "stop" | "remove" | "recreate";
@@ -852,6 +853,9 @@ export function LocalComputerSection() {
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch(...computerInventoryRequest("status", signal));
     const body = await response.json().catch(() => ({}));
+    // The poll loop can be cleaned up mid-flight; a resolved-but-stale read
+    // must never overwrite the state of whoever unmounted us.
+    if (signal?.aborted) return;
     if (!response.ok) throw new Error(body.error ?? t("vm.err.status", { code: response.status }));
     setStatus(body as Status);
     setError(null);
@@ -1250,6 +1254,8 @@ export function LocalComputerSection() {
         onRemove={(instance) => void removeVpsComputer(instance)}
       />
 
+      <MacLocalControl />
+
       <Card
         title={t("vm.main.title")}
         subtitle={perBot
@@ -1323,21 +1329,24 @@ export function LocalComputerSection() {
             </button>
           ))}
         </div>
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div>
-            <div className="text-[13px] text-ink">{t("vm.isolation.max")}</div>
-            <div className="text-[11.5px] text-ink-secondary">{t("vm.isolation.maxDetail")}</div>
+        {/* The cap only applies to per-bot VMs; shared mode runs exactly one. */}
+        {perBot && (
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[13px] text-ink">{t("vm.isolation.max")}</div>
+              <div className="text-[11.5px] text-ink-secondary">{t("vm.isolation.maxDetail")}</div>
+            </div>
+            <select
+              aria-label={t("vm.isolation.maxAria")}
+              value={status?.max_instances ?? 2}
+              disabled={!status || policyPending}
+              onChange={(event) => void savePolicy(status?.mode ?? "shared", Number(event.target.value))}
+              className="rounded-lg border border-hairline/40 bg-control px-2.5 py-1.5 text-[13px] text-ink disabled:opacity-50"
+            >
+              {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
           </div>
-          <select
-            aria-label={t("vm.isolation.maxAria")}
-            value={status?.max_instances ?? 2}
-            disabled={!status || policyPending}
-            onChange={(event) => void savePolicy(status?.mode ?? "shared", Number(event.target.value))}
-            className="rounded-lg border border-hairline/40 bg-control px-2.5 py-1.5 text-[13px] text-ink disabled:opacity-50"
-          >
-            {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </div>
+        )}
         {policyPending && <div className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-secondary"><Loader2 size={12} className="animate-spin" /> {t("vm.saving")}</div>}
       </Card>
 

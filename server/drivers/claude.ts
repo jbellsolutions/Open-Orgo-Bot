@@ -9,12 +9,13 @@
 //   - the bot's Orgo cloud computer via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-Orgo bridge
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, dirname, isAbsolute, normalize } from "node:path";
 
 import { DATA_DIR, stripWorkspaceCredentialEnv } from "../config.ts";
+import { writeFileAtomic } from "../atomic.ts";
 import { augmentedPath } from "../env-path.ts";
 import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { classifyResumeFailure, mayReplay, recoveryPromptFor } from "../resume-recovery.ts";
@@ -29,6 +30,7 @@ import type {
   RuntimeEvent,
   RuntimeEventListener,
   SendTurnInput,
+  SteerOutcome,
 } from "../contracts.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { gateServer, resultBudget } from "../mcp-gate-config.ts";
@@ -43,7 +45,9 @@ import {
   resolveInjectId,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
+import { permissionCommand, permissionLaunchCwd } from "./permission-command.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
+import { extractMcpImages } from "../mcp-tool-images.ts";
 import {
   ASK_USER_QUESTION_TOOL,
   askQuestionSummary,
@@ -374,6 +378,8 @@ export interface ClaudeConfig {
   configDir?: string;
   /** Company routing is supplied by the private desktop parent, never local discovery. */
   managed?: boolean;
+  /** Operator-provided hosted catalog; absent for ordinary desktop accounts. */
+  managedModels?: string[];
   permissionMode: "acceptEdits" | "auto" | "bypassPermissions";
   /** Available Claude built-ins. An empty list passes `--tools ""`. */
   tools?: string[];
@@ -387,6 +393,7 @@ export const STATIC_CLAUDE_MODELS: ModelCatalog = {
   options: [
     { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
     { id: "claude-fable-5", label: "Claude Fable 5" },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5", contextWindow: 1_000_000 },
     { id: "claude-opus-5", label: "Claude Opus 5" },
     { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
     { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
@@ -464,6 +471,7 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
 const PROXY_PATH = SPAWNED_PROXIES.computer;
 const PERM_PROXY_PATH = SPAWNED_PROXIES.permission;
 const DWEB_PROXY_PATH = SPAWNED_PROXIES.dweb;
+const HOOK_HELPER_PATH = SPAWNED_PROXIES.hook;
 // in the packaged app process.execPath is the Electron binary — this env
 // makes it behave as plain node for the spawned MCP proxies (harmless in dev)
 const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
@@ -523,6 +531,28 @@ function askSummary(ask: Ask): string {
   return askInputSummary(ask.input) ?? ask.tool ?? "tool";
 }
 
+
+/** Where the hook helper reads this thread's current turn token. Stable per
+ * thread (so the CLI's environment can name it once) and private. */
+export function hookTokenFile(threadId: string, botId?: string): string {
+  const digest = createHash("sha256").update(`${botId ?? ""}\0${threadId}`).digest("hex").slice(0, 24);
+  return join(DATA_DIR, "hook-tokens", `${digest}.token`);
+}
+
+/** The `hooks` block for the private --settings file: one command for each
+ * event the harness observes. Claude Code runs it with the event JSON on
+ * stdin and applies any hookSpecificOutput it prints. The command string is
+ * a shell line, so both paths are quoted (this repo's own path has a space). */
+export function claudeHookSettings(helperPath: string): Record<string, unknown> {
+  // JSON quoting is not shell quoting: $(), backticks and $names still
+  // expand inside double quotes on POSIX. Windows paths come through env
+  // variables so their backslashes are not JSON-escaped into the command.
+  const command = process.platform === "win32"
+    ? '"%OMB_HOOK_NODE%" "%OMB_HOOK_HELPER%"'
+    : [process.execPath, helperPath].map(path => `'${path.replace(/'/g, "'\\''")}'`).join(" ");
+  const entry = [{ matcher: "", hooks: [{ type: "command", command, timeout: 5 }] }];
+  return { PostToolUse: entry, PreCompact: entry, SessionStart: entry, Stop: entry };
+}
 
 export function permissionSocketPath(threadId: string, botId?: string) {
   // A readable prefix alone is not unique: ids that agree on their first
@@ -793,10 +823,12 @@ function decodeConfig(raw: unknown): ClaudeConfig {
   if (o.configDir !== undefined && typeof o.configDir !== "string") throw new Error("claude: configDir must be a string");
   const configDir = typeof o.configDir === "string" ? o.configDir.trim() : undefined;
   if (configDir) resolveClaudeConfigDir(configDir);
+  if (o.managedModels !== undefined && (o.managed !== true || !Array.isArray(o.managedModels) || !o.managedModels.length || o.managedModels.some(model => typeof model !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(model)))) throw new Error("Invalid hosted Claude models.");
   return {
     cli: typeof o.cli === "string" ? o.cli : "claude",
     ...(configDir ? { configDir } : {}),
     ...(o.managed === true ? { managed: true } : {}),
+    ...(o.managedModels ? { managedModels: o.managedModels as string[] } : {}),
     permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "acceptEdits",
     ...(tools !== undefined ? { tools } : {}),
     ...(disallowedTools !== undefined ? { disallowedTools } : {}),
@@ -907,7 +939,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     if (inheritsUserConfig(catalogEnv)) {
       console.error(`claude (${instanceId}): OMB_CLAUDE_INHERIT_USER_CONFIG=1 — bots inherit this machine's Claude Code MCP servers, skills, hooks and CLAUDE.md on every turn; remove it unless a bot needs a user-scope server`);
     }
-    let models = STATIC_CLAUDE_MODELS;
+    let models = config.managedModels ? { default: config.managedModels[0], options: config.managedModels.map(id => ({ id, label: id })) } : STATIC_CLAUDE_MODELS;
     const refreshModels = async () => {
       if (config.managed) return;
       try {
@@ -971,7 +1003,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * the truth — this is. null until init, or on a CLI that omits it. */
       nativePermissionMode: string | null;
       /** the running turn, or null between turns */
-      turn: { turnId: string; input: SendTurnInput; retryAbort: AbortController; settled: boolean; sawStreamDelta: boolean; authFailed?: boolean } | null;
+      turn: { turnId: string; input: SendTurnInput; retryAbort: AbortController; settled: boolean; sawStreamDelta: boolean; authFailed?: boolean; stopRequested?: boolean } | null;
       idleTimer: ReturnType<typeof setTimeout> | null;
       closing: boolean;
       stderr: string;
@@ -1049,9 +1081,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     });
     // retry bookkeeping lives PER THREAD, not per sendTurn call: a relaunch
     // is a fresh sendTurn, and the attempt cap must survive across launches
-    const retryState = new Map<string, { attempt: number; cancelled: boolean }>();
+    const retryState = new Map<string, { attempt: number; cancelled: boolean; rebuilt?: boolean }>();
 
     const sendTurn = async (turn: SendTurnInput, logicalTurnId?: string) => {
+      if (config.managedModels && (!turn.model || !config.managedModels.includes(turn.model))) throw new Error("This model is not assigned to this workspace.");
       if (config.managed && (!turn.model || turn.model.includes("::") || !config.configDir ||
           !input.environment.ANTHROPIC_API_KEY || !input.environment.ANTHROPIC_BASE_URL)) {
         throw new Error("Company model access is unavailable. Reconnect your organization; personal billing will not be used.");
@@ -1087,12 +1120,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const retry = retryState.get(threadId) ?? { attempt: 0, cancelled: false };
       // A fresh user turn starts un-cancelled. A relaunch must keep a Stop
       // that landed while it was being scheduled.
-      if (!relaunch) retry.cancelled = false;
+      if (!relaunch) {
+        retry.cancelled = false;
+        retry.rebuilt = false;
+      }
       retryState.set(threadId, retry);
       // a retry relaunches the whole CLI; the backoff is scaled down in tests
       // so a fake's transient failures don't stall real seconds
       const retryScale = Number(process.env.FAKE_CLAUDE_RETRY_SCALE ?? "1");
-      const sessionId = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+      const sessionId = !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
       const newSessionId = sessionId ? null : newId();
 
       const args = [
@@ -1281,7 +1317,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const env = environment(turnModel);
       const authSettings = isolated && !injected.injected
         ? readClaudeAuthSettings(env, input.environment) : {};
-      const authSettingsPath = mcpConfigPath && Object.keys(authSettings).length
+      // Harness hooks (item 0.2): one helper command for the events the
+      // harness observes. The helper reads its bearer from a per-thread file
+      // the harness rewrites every turn, so a long-lived CLI process never
+      // presents a stale token. Registered through the same private
+      // --settings file as the auth override; both are 0600 and per launch.
+      const hooks = turn.integrations?.hooks;
+      const hookTokenPath = hooks ? hookTokenFile(threadId, botId) : null;
+      if (hooks && hookTokenPath) {
+        mkdirSync(dirname(hookTokenPath), { recursive: true, mode: 0o700 });
+        writeFileAtomic(hookTokenPath, hooks.token, { mode: 0o600 });
+        env.OMB_HOOK_URL = hooks.url;
+        env.OMB_HOOK_TOKEN_FILE = hookTokenPath;
+        env.OMB_HOOK_NODE = process.execPath;
+        env.OMB_HOOK_HELPER = HOOK_HELPER_PATH;
+        // in the packaged app process.execPath is Electron — run the helper as node
+        if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = "1";
+      }
+      const settings: Record<string, unknown> = { ...authSettings };
+      if (hooks) settings.hooks = claudeHookSettings(HOOK_HELPER_PATH);
+      const authSettingsPath = mcpConfigPath && Object.keys(settings).length
         ? join(dirname(mcpConfigPath), "auth-settings.json") : null;
       if (authSettingsPath) args.push("--settings", authSettingsPath);
       // Our approvals and browser credentials expire at the user-turn
@@ -1289,6 +1344,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // parallel bot work must use the harness's durable delegate_bot path.
       env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = "1";
       const cwd = turn.cwd ?? homedir();
+      const commandCwd = permissionLaunchCwd(cwd);
       // Everything that shapes the process, minus session/turn-specific temp
       // paths. Their contents are represented directly in the key instead.
       const privateFileFlags = new Set(["--mcp-config", "--settings"]);
@@ -1303,6 +1359,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         model: injected.model ?? null,
         base: env.ANTHROPIC_BASE_URL ?? null,
         configDir: env.CLAUDE_CONFIG_DIR ?? null,
+        // hooks on/off changes the settings file the process was launched with
+        hooks: Boolean(hooks),
         // Rotating an account's key/helper must not reuse the old process.
         auth: createHash("sha256").update(JSON.stringify({
           settings: authSettings,
@@ -1311,13 +1369,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
 
       // Reuse the live process when it is idle, unchanged, and is the session
-      // the harness wants resumed. Anything else: close it and spawn fresh
-      // (with --resume, so the conversation continues in the new process).
+      // the harness wants resumed. Clearing a cursor alone does not opt out
+      // of legacy reuse: an explicit rebuild must discard the idle context.
       const live = sessions.get(threadId);
-      if (live && !live.turn && !live.closing && live.child.exitCode === null && live.argsKey === argsKey && (!sessionId || sessionId === live.sessionId)) {
+      if (!turn.sessionReset && live && !live.turn && !live.closing && live.child.exitCode === null && live.argsKey === argsKey && (!sessionId || sessionId === live.sessionId)) {
         if (live.idleTimer) clearTimeout(live.idleTimer);
         live.turn = { turnId, input: turn, retryAbort, settled: false, sawStreamDelta: false };
         active.set(threadId, { stop: () => {
+          if (live.turn) live.turn.stopRequested = true;
           closeSession(threadId, "interrupted");
           retry.cancelled = true;
           retryAbort.abort();
@@ -1325,12 +1384,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }, turnId, broker: live.broker });
         emit({ ...base(threadId, turnId), type: "turn.started" });
         const volatile = turn.systemVolatile ?? "";
-        const message = volatile === live.volatile
+        const message = volatile === live.volatile && !turn.mentionTurn
           ? promptMsg
           : claudeUserMessage(withVolatileNote(turn.text, volatile), turn.images);
         live.volatile = volatile;
+        const running = live.turn;
         const written = await writeUser(live, threadId, message);
-        if (!written) {
+        if (!written && !running?.stopRequested) {
           active.delete(threadId);
           live.turn = null;
           closeSession(threadId, "stdin write failed");
@@ -1350,7 +1410,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         return { turnId };
       }
-      if (live) closeSession(threadId, "spawn contract changed");
+      if (live) closeSession(threadId, turn.sessionReset ? "context reset" : "spawn contract changed");
 
       // Until sessions.set() below, this turn owns every launch resource.
       // Any bind, private-config or synchronous spawn failure must release
@@ -1407,6 +1467,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 requestType: ask.kind,
                 tool: ask.tool,
                 summary: askSummary(ask),
+                command: ask.kind === "permission" && ask.tool === "Bash"
+                  ? permissionCommand(ask.input.command, commandCwd) : undefined,
+                requiresExplicitApproval: ask.kind === "permission" && ask.tool === "Bash" && ask.input.dangerouslyDisableSandbox === true || undefined,
                 nativeReview,
                 // the proxy hands Claude its own suggested rules on `always`;
                 // host control stays one action at a time
@@ -1450,7 +1513,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers }), { mode: 0o600 });
         }
         if (authSettingsPath) {
-          writeFileSync(authSettingsPath, JSON.stringify(authSettings), { mode: 0o600 });
+          writeFileSync(authSettingsPath, JSON.stringify(settings), { mode: 0o600 });
         }
         if (sessionId) args.push("--resume", sessionId);
         else args.push("--session-id", newSessionId!);
@@ -1548,7 +1611,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               session.sawInit = true;
               session.nativePermissionMode = typeof o.permissionMode === "string" ? o.permissionMode : null;
               if (typeof o.session_id === "string") session.sessionId = o.session_id;
-              emit({ ...base(threadId, currentTurnId()), type: "session.started", sessionId: o.session_id, model: o.model });
+              emit({ ...base(threadId, currentTurnId()), type: "session.started", sessionId: o.session_id, model: o.model, ...(retry.rebuilt ? { rebuilt: true } : {}) });
             } else if (o.subtype === "thinking_tokens") {
               emit({ ...base(threadId, currentTurnId()), type: "item.updated", itemType: "reasoning", tokens: o.estimated_tokens });
             }
@@ -1582,12 +1645,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               break;
             }
             if (text.trim()) {
+              // The CLI's own report of any other API error is still shown,
+              // but marked: the model never produced it.
+              const synthetic = o.is_api_error_message === true || typeof o.error === "string" ? { synthetic: true } : {};
               // fallback delta for CLIs/paths that never streamed the block
               if (!session.turn?.sawStreamDelta) {
-                emit({ ...base(threadId, currentTurnId()), type: "content.delta", streamKind: "assistant_text", delta: text });
+                emit({ ...base(threadId, currentTurnId()), ...synthetic, type: "content.delta", streamKind: "assistant_text", delta: text });
               }
               if (session.turn) session.turn.sawStreamDelta = false;
-              emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "assistant_text", text });
+              emit({ ...base(threadId, currentTurnId()), ...synthetic, type: "item.completed", itemType: "assistant_text", text });
             }
             for (const b of Array.isArray(msg.content) ? msg.content : []) {
               if (b.type === "tool_use") {
@@ -1622,6 +1688,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
               if (b.type === "tool_result") {
                 emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "tool", itemId: b.tool_use_id, ok: !b.is_error, output: toolDetailPreview(b.content) });
+                for (const img of extractMcpImages(b.content)) {
+                  emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "assistant_image", data: img.data });
+                }
               }
             }
             break;
@@ -1694,7 +1763,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // a turn still running when the process died is a failed turn; a
         // process that exited between turns (idle close, contract change)
         // is just a session ending
-        if (session.turn && !session.turn.settled) {
+        if (session.turn?.stopRequested && !session.turn.settled) {
+          settle(false, "interrupted");
+        } else if (session.turn && !session.turn.settled) {
           // A retained process may be running a later user turn. Its close
           // handler must retry that request, not the process's first prompt.
           const { turnId, input: turn, retryAbort } = session.turn;
@@ -1761,7 +1832,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               active.set(threadId, { stop: () => { retry.cancelled = true; retryAbort.abort(); }, turnId });
               try {
                 const cursor = session.sessionId ?? sessionId ?? undefined;
-                await sendTurn({ ...turn, resumeCursor: cursor }, turnId);
+                // The reset was consumed by the initial launch. Retry the
+                // new session, never the context that launch replaced.
+                await sendTurn({ ...turn, sessionReset: false, resumeCursor: cursor }, turnId);
               } catch (e) {
                 if (active.get(threadId)?.turnId === turnId) active.delete(threadId);
                 retryState.delete(threadId);
@@ -1816,7 +1889,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             sessions.delete(threadId);
             session.turn = null;
-            // Same relaunch handle as the transient-retry path above.
+            // Same relaunch handle as the transient-retry path above. The new
+            // session is announced as rebuilt only when it is actually given
+            // the replay: with nothing to replay it gets the turn text alone.
+            retry.rebuilt = recovery.replayed;
             retryState.set(threadId, retry);
             active.set(threadId, { stop: () => { retry.cancelled = true; retryAbort.abort(); }, turnId });
             emit({
@@ -1867,6 +1943,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
 
       const stop = () => {
+        if (session.turn) session.turn.stopRequested = true;
         // taskkill is asynchronous on Windows. Retire steering and approvals
         // now, before a still-connected child can submit more work.
         closeSession(threadId, "interrupted");
@@ -1881,7 +1958,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // stdin stays OPEN: that is what keeps the session alive for a
       // mid-turn steer or the next turn; closeSession() ends it.
       if (!(await writeUser(session, threadId, promptMsg))) {
-        settle(false, "stdin_write_failed");
+        if (!session.turn?.stopRequested) settle(false, "stdin_write_failed");
         closeSession(threadId, "stdin write failed");
       }
 
@@ -1889,11 +1966,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     };
 
     /** A user message into the running turn: the CLI delivers it before its
-     * next model call. False when nothing is running here to steer. */
-    const steer = async (threadId: string, text: string): Promise<boolean> => {
+     * next model call. "refused" when nothing is running here to steer or
+     * the stdin write provably failed; the caller queues those words. */
+    const steer = async (threadId: string, text: string): Promise<SteerOutcome> => {
       const s = sessions.get(threadId);
-      if (!s || !s.turn || s.turn.settled || s.closing || s.child.exitCode !== null) return false;
-      return writeUser(s, threadId, claudeUserMessage(text, undefined));
+      if (!s || !s.turn || s.turn.settled || s.closing || s.child.exitCode !== null) return "refused";
+      return (await writeUser(s, threadId, claudeUserMessage(text, undefined))) ? "steered" : "refused";
     };
 
     // Sign in from Settings: the unmodified CLI's own login, driven over pipes
@@ -1923,10 +2001,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       new Promise((resolve, reject) => {
         const child = spawnCli(
           config.cli,
-          ["-p", "--model", "claude-haiku-4-5", "--output-format", "text"],
+          ["-p", "--model", config.managedModels?.[0] ?? "claude-haiku-4-5", "--output-format", "text"],
           {
             stdio: ["pipe", "pipe", "pipe"],
-            env: environment("claude-haiku-4-5"),
+            env: environment(config.managedModels?.[0] ?? "claude-haiku-4-5"),
           },
         );
         let stdout = "";
@@ -2002,9 +2080,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           nativeImageInput: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
           queueing: true,
+          // Only while this CLI can be told to refresh a resumed session's
+          // recorded system prompt (--system-prompt-snapshot). Keeping a
+          // session across an update from outside it means the harness keeps
+          // its prompt too; an older CLI would answer a delegated return with
+          // the instructions of the turn that started the session, where a
+          // fresh session rebuilt them. Unknown version: not yet.
+          get strictResume() {
+            return cliVersionChecked && cliVersion !== null && claudeCliSupports(cliVersion, "--system-prompt-snapshot");
+          },
           // Harness turns reassert a per-bot mode and restore the broker even
           // when an old instance was configured with bypassPermissions.
           localComputerMcp: true,
+          hooks: true,
         },
         sendTurn,
         steer,
@@ -2028,7 +2116,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           return () => listeners.delete(listener);
         },
       },
-      generateText: (prompt) => generateReview(prompt),
+      generateText: (prompt, options) => generateReview(prompt, options?.signal),
       reviewPermission: generateReview,
       dispose: async () => {
         try {

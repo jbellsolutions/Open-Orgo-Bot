@@ -161,14 +161,15 @@ function Fixture() {
     }
   }, [state.config, dispatch]);
   useEffect(() => {
-    const base = state.instances[0];
-    if (base && !state.instances.some((instance) => instance.driverKind === "boxAgent")) {
-      // Registry display only; every cloud operation remains the transport
-      // stub above, never the paid Box service.
-      dispatch({ type: "instances", instances: [...state.instances,
-        { ...base, instanceId: "fixture-box", driverKind: "boxAgent" }] });
+    const selectedId = bot?.modelSelection.instanceId;
+    if (selectedId && state.instances.some((instance) => instance.instanceId === selectedId && !instance.capabilities?.computerMcp)) {
+      // Registry display only: the bot's own engine runs the cloud computer.
+      // Every cloud operation remains the transport stub above, never the
+      // paid Orgo service.
+      dispatch({ type: "instances", instances: state.instances.map((instance) => instance.instanceId === selectedId
+        ? { ...instance, capabilities: { ...instance.capabilities, computerMcp: true } } : instance) });
     }
-  }, [state.instances, dispatch]);
+  }, [state.instances, bot?.modelSelection.instanceId, dispatch]);
   const fixtureBot: Bot | undefined = bot && (scenario === "default"
     ? { ...bot, busy, tasks: bot.tasks?.map((task) => ({ ...task, busy })) }
     : { ...bot, busy: false, browser: true,

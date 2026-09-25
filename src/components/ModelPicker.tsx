@@ -1,16 +1,17 @@
 // Compact model picker: providers live on a Cloud/Local rail. Ready engines
 // show a short suggested list with search and an explicit all-models view;
-// engines that need setup show one focused action instead of a disabled wall.
+// unconfigured engines remain in Settings instead of cluttering the picker.
 // Reasoning effort rides along (EffortRow): model and effort are one choice to
 // the person making it, so the chat header and the settings dialog render the
 // same row and write through the same action.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { useStore, currentTaskBot, type Bot, type InstanceInfo, type ModelSelection } from "@/state/store";
-import type { EffortLevel, ModelVariantOption } from "../../server/contracts.ts";
+import type { EffortLevel } from "../../shared/wire";
+import type { ModelVariantOption } from "../../shared/runtime-events";
 import { filterCustomModels, partitionCustomModels, suggestedModels } from "@/lib/custom-models";
-import { isCustomOnly, splitEngineRail } from "@/lib/engine-rail";
-import { ProviderMark } from "./ProviderIcons";
+import { configuredModelInstances, isCustomOnly, splitEngineRail } from "@/lib/engine-rail";
+import { InstanceProviderMark } from "./ProviderIcons";
 import { EngineSetup, EngineUpdateNotice, needsCli, needsSignIn } from "./EngineSetup";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -274,17 +275,18 @@ export function ModelEngineRail({ instances, selectedInstance, claudeInstance, o
     const selected = claude ? selectedInstance?.driverKind === "claudeAgent" : instance.instanceId === selectedInstance?.instanceId;
     const label = claude ? "Claude" : instance.displayName;
     const attention = needsCli(target) || needsSignIn(target) || Boolean(target.snapshot.update);
+    const managedBy = target.policy ? t("policy.managedBy", { organization: target.policy.organizationName }) : undefined;
     return (
       <button
         type="button"
         key={instance.instanceId}
         onClick={() => onSelect(target)}
-        aria-label={label}
+        aria-label={managedBy ? `${label} · ${managedBy}` : label}
         aria-pressed={selected}
-        title={`${label} · ${engineStatus(target)}`}
-        className={cn("relative flex size-9 items-center justify-center rounded-lg", selected ? "bg-control ring-1 ring-hairline/50" : "hover:bg-control/60")}
+        title={`${label} · ${managedBy ?? engineStatus(target)}`}
+        className={cn("relative flex size-9 items-center justify-center rounded-lg", selected ? "bg-control ring-1 ring-hairline/50" : "hover:bg-control/60", managedBy && "opacity-40")}
       >
-        <ProviderMark driverKind={instance.driverKind} size={18} />
+        <InstanceProviderMark instance={target} size={18} />
         {attention && <span className="absolute bottom-0.5 right-0.5 size-1.5 rounded-full bg-warning ring-2 ring-panel" />}
       </button>
     );
@@ -353,17 +355,32 @@ export function ModelPicker({
 
   const selection = bot.modelSelection;
   const active = state.instances.find((instance) => instance.instanceId === selection.instanceId);
+  const pickerInstances = configuredModelInstances(state.instances);
   const selectedVariantLabel = selection.variant === undefined ? undefined : variantLabel(
     active?.models.options.find((option) => option.id === selection.model)?.variants?.find((option) => option.id === selection.variant)
       ?? { id: selection.variant, label: selection.variant },
   );
-  const claudeAccounts = state.instances.filter((instance) => instance.driverKind === "claudeAgent");
-  const multipleClaudeAccounts = claudeAccounts.length > 1;
+  const claudeAccounts = pickerInstances.filter((instance) => instance.driverKind === "claudeAgent");
+  const multipleClaudeAccounts = state.instances.filter((instance) => instance.driverKind === "claudeAgent").length > 1;
   const showActiveAccount = multipleClaudeAccounts && active?.driverKind === "claudeAgent";
   const claudeRailInstance = claudeAccounts.find((instance) => instance.instanceId === lastClaudeIdRef.current)
-    ?? (active?.driverKind === "claudeAgent" ? active : claudeAccounts[0]);
+    ?? claudeAccounts.find((instance) => instance.instanceId === selection.instanceId) ?? claudeAccounts[0];
   const railInstance =
-    state.instances.find((instance) => instance.instanceId === (railId ?? selection.instanceId)) ?? state.instances[0];
+    pickerInstances.find((instance) => instance.instanceId === (railId ?? selection.instanceId)) ?? pickerInstances[0];
+  const displayedInstanceId = railInstance?.instanceId;
+  const hasOfficialModels = Boolean(railInstance?.models.options.some((option) => !option.custom));
+  const customOnly = isCustomOnly(railInstance);
+  useEffect(() => {
+    if (railId !== null && railId !== displayedInstanceId) {
+      // A refresh can remove the provider being browsed. Reset its list, not
+      // the saved model selection or the pane chosen when reopening the menu.
+      setPane(customOnly || !hasOfficialModels ? "custom" : "main");
+      setQuery("");
+      setShowAll(false);
+    } else if (customOnly || !hasOfficialModels) {
+      setPane("custom");
+    }
+  }, [railId, displayedInstanceId, hasOfficialModels, customOnly]);
 
   const refreshLocalInstances = useCallback(() => {
     if (refreshingRef.current) return;
@@ -383,9 +400,9 @@ export function ModelPicker({
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setRefreshing(true);
-    const instanceId = railId ?? selection.instanceId;
+    const instanceId = displayedInstanceId;
     void refreshInstances()
-      .then(() => refreshInstanceModels(instanceId))
+      .then(() => instanceId ? refreshInstanceModels(instanceId) : undefined)
       .catch(() => {
         // Keep the last known catalog when the app is temporarily offline.
       })
@@ -393,7 +410,7 @@ export function ModelPicker({
         refreshingRef.current = false;
         setRefreshing(false);
       });
-  }, [railId, refreshInstanceModels, refreshInstances, selection.instanceId]);
+  }, [displayedInstanceId, refreshInstanceModels, refreshInstances]);
 
   useEffect(() => {
     if (open) refreshLocalInstances();
@@ -446,7 +463,7 @@ export function ModelPicker({
   };
 
   const pick = (instance: InstanceInfo, model: string) => {
-    if (bot.busy) return;
+    if (bot.busy || instance.policy) return;
     const nextSelection = modelSelectionForPick(selection, instance, model);
     const updateBotDefault = !threadId || scope === "bot";
     const profile = state.bots.find((candidate) => candidate.id === bot.id) ?? bot;
@@ -504,10 +521,11 @@ export function ModelPicker({
       onClick={() => {
         if (bot.busy) return;
         if (active?.driverKind === "claudeAgent") lastClaudeIdRef.current = active.instanceId;
-        setRailId(selection.instanceId);
+        const initial = pickerInstances.find((instance) => instance.instanceId === selection.instanceId) ?? pickerInstances[0];
+        setRailId(initial?.instanceId ?? null);
         setOpen((wasOpen) => {
           const next = !wasOpen;
-          if (next) openFor(state.instances.find((instance) => instance.instanceId === selection.instanceId));
+          if (next) openFor(initial);
           return next;
         });
       }}
@@ -531,7 +549,7 @@ export function ModelPicker({
           : selection.model
       }
     >
-      {active && <ProviderMark driverKind={active.driverKind} size={14} />}
+      {active && <InstanceProviderMark instance={active} size={14} />}
       {!contained && showActiveAccount && (
         <span data-model-account-compact className="hidden max-w-20 truncate @max-4xl/chathead:inline">{active.displayName}</span>
       )}
@@ -589,7 +607,7 @@ export function ModelPicker({
               : "absolute right-0 top-full z-30 mt-2 w-[380px] max-w-[calc(100vw-2rem)] max-h-[min(480px,calc(100dvh-7rem))] shadow-2xl shadow-black/50",
           )}
         >
-          <ModelEngineRail instances={state.instances} selectedInstance={railInstance} claudeInstance={claudeRailInstance} onSelect={selectRail} />
+          {pickerInstances.length > 0 && <ModelEngineRail instances={pickerInstances} selectedInstance={railInstance} claudeInstance={claudeRailInstance} onSelect={selectRail} />}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {threadId && (
@@ -668,7 +686,13 @@ export function ModelPicker({
                   </button>
                 )}
 
-                {blocked ? (
+                {railInstance.policy ? (
+                  // The organisation does not allow this engine: shown, never pickable.
+                  <div data-policy-blocked className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-1 text-[12.5px] leading-relaxed text-ink-secondary">
+                    <p className="font-medium text-ink">{t("policy.managedBy", { organization: railInstance.policy.organizationName })}</p>
+                    <p className="mt-1">{t("policy.modelBlocked", { organization: railInstance.policy.organizationName })}</p>
+                  </div>
+                ) : blocked ? (
                   <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-1">
                     <EngineSetup instance={railInstance} intent={pane === "custom" ? "inject" : "cloud"} />
                     {railInstance.claudeAccount && needsSignIn(railInstance) && pane !== "custom" && (
@@ -787,7 +811,7 @@ export function ModelPicker({
                   />
                 )}
 
-                {pane === "main" && (
+                {pane === "main" && custom.length > 0 && (
                   <button
                     type="button"
                     aria-label={
@@ -817,6 +841,12 @@ export function ModelPicker({
             ) : (
               <div className="px-4 py-5 text-[13px] text-ink-secondary">{t("model.noProviders")}</div>
             )}
+            <button type="button" onClick={() => {
+              setOpen(false);
+              dispatch({ type: "toggleAppSettings", open: true, section: "engines" });
+            }} className="shrink-0 border-t border-hairline/40 px-4 py-2 text-left text-[12px] text-ink-secondary hover:bg-control/60 hover:text-ink">
+              {t("settings.engines.title")}
+            </button>
           </div>
         </div>
       )}

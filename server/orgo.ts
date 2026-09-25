@@ -247,7 +247,7 @@ export function orgoErrorMessage(status: number, what: string, body?: any): stri
     return `Orgo denied ${what} for this account — check the selected workspace and account permissions`;
   }
   if (status === 404) return `${what} was not found in Orgo`;
-  if (status === 429) return "Orgo is rate-limiting this account — wait a moment and retry";
+  if (status === 429) return theirs || "Orgo is rate-limiting this account — wait a moment and retry";
   return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;
 }
 

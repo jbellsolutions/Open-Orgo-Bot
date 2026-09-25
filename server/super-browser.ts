@@ -238,7 +238,7 @@ export function userMcpNames(custom: Record<string, unknown> | undefined): strin
   return Object.keys(custom ?? {}).filter((name) => name !== SUPER_BROWSER_MCP_NAME);
 }
 
-const SUPER_BROWSER_PROVIDER_ENV = [
+export const SUPER_BROWSER_PROVIDER_ENV = [
   "AIRTOP_API_KEY", "AIRTOP_API_BASE", "AIRTOP_TIMEOUT_MINUTES", "BROWSER_USE_API_KEY",
   "BROWSERBASE_API_KEY", "BROWSERBASE_PROJECT_ID", "DECODO_PROXY", "HYPERBROWSER_API_KEY",
   "HYPERBROWSER_API_BASE", "ORGO_API_KEY", "ORGO_API_BASE", "ORGO_COMPUTER_ID", "ORGO_MODEL",

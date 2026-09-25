@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Install: cp to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openorgobot.maintenance.plist`.
+     Runs scripts/maintenance/sync-upstream.sh Mon/Wed/Fri at 04:10. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ai.openorgobot.maintenance</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/home/REPOS/Open-Orgo-Bot/scripts/maintenance/sync-upstream.sh</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/Users/home/.local/share/fnm/aliases/default/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>GIT_TERMINAL_PROMPT</key>
+		<string>0</string>
+		<key>HOME</key>
+		<string>/Users/home</string>
+	</dict>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>10</integer></dict>
+		<dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>10</integer></dict>
+		<dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>10</integer></dict>
+	</array>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/home/Library/Logs/open-orgo-bot/maintenance/launchd.stdout.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/home/Library/Logs/open-orgo-bot/maintenance/launchd.stderr.log</string>
+</dict>
+</plist>
