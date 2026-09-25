@@ -4,8 +4,10 @@
 #   scripts/maintenance/install-app.sh <path/to/Open Orgo Bot.app> [--force-now]
 #   scripts/maintenance/install-app.sh --staged        # retry a staged install
 #
-# - Re-signs with the stable local identity "Open Orgo Bot Local Signing" when it
-#   exists, so macOS Screen Recording / Accessibility grants survive rebuilds.
+# - Leaves the build's own signature alone by default: the app executable is the
+#   stock Electron binary, so its cdhash (and macOS Screen Recording /
+#   Accessibility grants) only change when the Electron version changes. Set
+#   OOB_SIGN_IDENTITY to re-sign with a local code-signing identity instead.
 # - Swaps only when the Mac is idle and no bot activity is recent; otherwise
 #   stages the bundle and exits 3 (the next run retries).
 # - Backs up the current app (keeps the last 3), relaunches, health-checks the
@@ -18,7 +20,7 @@ TARGET="/Applications/${APP_NAME}.app"
 BACKUPS="$HOME/Applications/${APP_NAME} Backups"
 STAGED_DIR="$HOME/Applications/${APP_NAME} Staged"
 STAGED="$STAGED_DIR/${APP_NAME}.app"
-SIGN_ID="${OOB_SIGN_IDENTITY:-Open Orgo Bot Local Signing}"
+SIGN_ID="${OOB_SIGN_IDENTITY:-}"
 IDLE_MIN="${OOB_IDLE_MINUTES:-20}"
 ACTIVITY_MIN="${OOB_ACTIVITY_MINUTES:-10}"
 DATA_DIR="$HOME/.openorgobot"
@@ -41,15 +43,15 @@ done
 [ -d "$SRC/Contents/MacOS" ] || { log "no app bundle at $SRC"; exit 2; }
 NEW_VERSION="$(bundle_version "$SRC")"
 
-# 1. Stable signature (only for a bundle not yet signed by us).
-if security find-identity -p codesigning 2>/dev/null | grep -q "\"$SIGN_ID\""; then
-  if ! codesign -dvv "$SRC" 2>&1 | grep -q "Authority=$SIGN_ID"; then
-    log "re-signing with \"$SIGN_ID\""
-    codesign --force --deep --options runtime --preserve-metadata=entitlements,flags --sign "$SIGN_ID" "$SRC"
-  fi
-  codesign --verify --deep --strict "$SRC"
-else
-  log "WARNING: signing identity \"$SIGN_ID\" not found; bundle stays ad-hoc and macOS may re-prompt for Screen Recording/Accessibility"
+# 1. Optional re-signing, and a heads-up when macOS will re-prompt for permissions.
+cdhash() { codesign -dvvv "$1" 2>&1 | awk -F= '/^CDHash=/{print $2}'; }
+if [ -n "$SIGN_ID" ]; then
+  log "re-signing with \"$SIGN_ID\""
+  ENTITLEMENTS="$(dirname "$0")/../../build/entitlements.mac.plist"
+  codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$SRC"
+elif [ -d "$TARGET" ] && [ "$(cdhash "$SRC")" != "$(cdhash "$TARGET")" ]; then
+  log "note: the app executable changed (new Electron); macOS may ask for Screen Recording/Accessibility again"
+  notify "This update changes the app's engine; macOS may ask for Screen Recording and Accessibility again."
 fi
 
 # 2. Idle gate.
