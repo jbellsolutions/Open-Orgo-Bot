@@ -181,11 +181,11 @@ describe("local computer descriptor", () => {
 
   it.skipIf(process.platform === "win32")("treats the first present legacy descriptor as authoritative", () => {
     const root = privateUserData("legacy-mac-home");
-    const first = join(root, "Library", "Application Support", "OpenMausBot");
+    const first = join(root, "Library", "Application Support", "Open Orgo Bot");
     const stale = join(root, "Library", "Application Support", "OpenGrokBot");
     mkdirSync(first, { recursive: true, mode: 0o700 });
     mkdirSync(stale, { recursive: true, mode: 0o700 });
-    const reason = "Accessibility required; grant access in System Settings and restart OpenMausBot";
+    const reason = "Accessibility required; grant access in System Settings and restart Open Orgo Bot";
     writeFileSync(join(first, "cua-connection.json"), JSON.stringify({ mode: "unavailable", reason }), { mode: 0o600 });
     writeFileSync(join(stale, "cua-connection.json"), JSON.stringify({
       mode: "embedded", socketPath: "/fixture/stale.sock", mcpCommand: "/fixture/stale-driver",

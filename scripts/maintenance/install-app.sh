@@ -59,7 +59,9 @@ is_busy() {
   local idle_s
   idle_s=$(( $(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print $NF; exit}') / 1000000000 ))
   if [ "$idle_s" -lt $(( IDLE_MIN * 60 )) ]; then log "user active ${idle_s}s ago"; return 0; fi
-  if [ -f "$DATA_DIR/messages.db-wal" ] && [ -n "$(find "$DATA_DIR/messages.db-wal" -mmin -"$ACTIVITY_MIN" 2>/dev/null)" ]; then
+  # Bot turns write their event logs, native transcripts and workspaces here.
+  if [ -n "$(find "$DATA_DIR/events" "$DATA_DIR/native" "$DATA_DIR/bots" "$DATA_DIR/task-workspaces" "$DATA_DIR"/messages.db* \
+        -type f -mmin -"$ACTIVITY_MIN" -print -quit 2>/dev/null)" ]; then
     log "bot activity in the last ${ACTIVITY_MIN} min"; return 0
   fi
   return 1

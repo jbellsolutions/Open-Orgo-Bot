@@ -29,6 +29,10 @@ for arg in "$@"; do
 done
 if [ "${OOB_DRY_RUN:-0}" = 1 ]; then DRY_RUN=1; fi
 
+# The repo's pre-push hook re-runs lint/typecheck from the checkout it pushes
+# from; this script runs every gate itself, in the worktree, first.
+export OMB_SKIP_HOOKS=1
+
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG="$LOG_DIR/sync-$STAMP.log"
@@ -42,9 +46,18 @@ if ! mkdir "$LOCK" 2>/dev/null; then log "another sync is running ($LOCK)"; exit
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 log "log: $LOG  dry-run=$DRY_RUN install=$INSTALL"
+preflight() { # proves every credential the unattended run needs, from launchd's environment
+  local ok=0
+  log "preflight: claude=$CLAUDE_BIN"
+  if [ -x "$CLAUDE_BIN" ] && "$CLAUDE_BIN" -p "Reply with exactly: ok" --safe-mode --strict-mcp-config --no-session-persistence --max-budget-usd 1 2>&1 | grep -qi '^ok'; then log "preflight: claude -p ok"; else log "preflight: claude -p FAILED"; ok=1; fi
+  if gh auth status >/dev/null 2>&1; then log "preflight: gh ok"; else log "preflight: gh FAILED"; ok=1; fi
+  if git -C "$REPO" push --dry-run --no-verify origin HEAD:refs/heads/main >/dev/null 2>&1; then log "preflight: git push ok"; else log "preflight: git push FAILED"; ok=1; fi
+  return $ok
+}
 cd "$REPO"
 for bin in git gh pnpm node; do command -v "$bin" >/dev/null || { log "missing $bin on PATH"; exit 1; }; done
 gh auth status >/dev/null 2>&1 || { log "gh is not authenticated"; notify "gh is not authenticated; sync skipped."; exit 1; }
+if [ "$DRY_RUN" = 1 ]; then preflight || { notify "Maintenance preflight failed; see $LOG"; exit 1; }; fi
 
 # ---------------------------------------------------------------- watch-only
 # Orgo and Hermes ship no package this repo depends on (server/orgo.ts is a
@@ -94,7 +107,7 @@ BASE_REF="$(cat UPSTREAM_VERSION 2>/dev/null || true)"
 [ -n "$BASE_REF" ] && git fetch --quiet --no-tags upstream "+refs/tags/$BASE_REF:refs/upstream-tags/$BASE_REF" || true
 BASE_REF="refs/upstream-tags/${BASE_REF:-$TAG}"
 
-if git merge-base --is-ancestor "$UPSTREAM_REF" HEAD; then
+if git merge-base --is-ancestor "$UPSTREAM_REF" origin/main; then
   log "already on upstream $TAG; nothing to merge"
   # A build staged earlier (Mac was busy) gets another chance to install.
   if [ "$INSTALL" = 1 ] && [ "$DRY_RUN" = 0 ] && [ -d "$HOME/Applications/Open Orgo Bot Staged/Open Orgo Bot.app" ]; then
@@ -104,9 +117,7 @@ if git merge-base --is-ancestor "$UPSTREAM_REF" HEAD; then
   exit 0
 fi
 log "upstream $TAG is new (fork is at $(cat UPSTREAM_VERSION))"
-if [ "$DRY_RUN" = 1 ]; then
-  log "dry run: would merge $TAG; claude=$CLAUDE_BIN"; "$CLAUDE_BIN" --version || true; exit 0
-fi
+if [ "$DRY_RUN" = 1 ]; then log "dry run: would merge $TAG; stopping"; exit 0; fi
 
 # ---------------------------------------------------------------- merge
 WT="$REPO/.ai-worktrees/sync-$TAG"
@@ -147,6 +158,8 @@ $1"
   log "asking Claude: $(printf '%s' "$1" | head -1)"
   "$CLAUDE_BIN" -p "$prompt" \
     --model opus \
+    --safe-mode --strict-mcp-config --disable-slash-commands --no-session-persistence \
+    --append-system-prompt "This is an unattended maintenance run. Nobody will answer questions or approve plans: never ask for confirmation, never stop to propose a plan. Make the changes, then print a short summary." \
     --permission-mode dontAsk \
     --max-budget-usd "$CLAUDE_BUDGET_USD" \
     --allowedTools "Read" "Edit" "Write" "Grep" "Glob" \
@@ -237,9 +250,11 @@ Automated by scripts/maintenance/sync-upstream.sh; all gates passed
 (fork invariants, locale check, lint, typecheck, full test suite)."
 git update-ref refs/open-orgo-bot/upstream-last-applied "$UPSTREAM_REF"
 git update-ref refs/open-orgo-bot/upstream-last-reported "$UPSTREAM_REF"
+# Publish the exact tested commit first; local main only follows a successful push.
+git push --quiet --no-verify origin "HEAD:refs/heads/main"
 cd "$REPO"
-git merge --ff-only --quiet "$BRANCH"
-git push --quiet origin main
+git fetch --quiet origin
+git merge --ff-only --quiet origin/main
 log "pushed v$NEW_VERSION ($TAG) to origin/main"
 upstream_issues | while IFS=$'\t' read -r num title; do
   gh issue close "$num" -R "$ORIGIN_SLUG" --comment "Integrated in $(git rev-parse --short HEAD) (Open Orgo Bot v$NEW_VERSION, upstream $TAG)." >/dev/null || true
